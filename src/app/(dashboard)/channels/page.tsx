@@ -1,0 +1,150 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { Plus, Pencil, Trash2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Modal, ModalFooter } from "@/components/ui/modal";
+import { Input, Label } from "@/components/ui/input";
+
+interface Channel {
+  id: string;
+  name: string;
+  sortOrder: number;
+  _count: { customers: number };
+}
+
+export default function ChannelsPage() {
+  const [channels, setChannels] = useState<Channel[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing] = useState<Channel | null>(null);
+  const [name, setName] = useState("");
+  const [sortOrder, setSortOrder] = useState(0);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function load() {
+    setLoading(true);
+    const res = await fetch("/api/channels");
+    if (res.ok) setChannels(await res.json());
+    setLoading(false);
+  }
+
+  useEffect(() => { load(); }, []);
+
+  function openCreate() {
+    setEditing(null);
+    setName("");
+    setSortOrder(channels.length);
+    setError("");
+    setModalOpen(true);
+  }
+
+  function openEdit(ch: Channel) {
+    setEditing(ch);
+    setName(ch.name);
+    setSortOrder(ch.sortOrder);
+    setModalOpen(true);
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    setError("");
+    const url = editing ? `/api/channels/${editing.id}` : "/api/channels";
+    const method = editing ? "PATCH" : "POST";
+    const res = await fetch(url, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, sortOrder }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setError(data.error || "保存失败");
+      setSaving(false);
+      return;
+    }
+    setModalOpen(false);
+    await load();
+    setSaving(false);
+  }
+
+  async function handleDelete(id: string) {
+    if (!confirm("确定删除此渠道？")) return;
+    const res = await fetch(`/api/channels/${id}`, { method: "DELETE" });
+    const data = await res.json();
+    if (!res.ok) alert(data.error || "删除失败");
+    else await load();
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-serif font-bold">渠道类型管理</h1>
+          <p className="text-muted text-sm mt-1 font-serif">
+            配置客户渠道分类，用于客户建档与统计
+          </p>
+        </div>
+        <Button onClick={openCreate}>
+          <Plus className="h-4 w-4 mr-1" />
+          新增渠道
+        </Button>
+      </div>
+
+      <Card>
+        <CardContent className="pt-5">
+          {loading ? (
+            <div className="text-center py-12 text-muted">加载中...</div>
+          ) : (
+            <table className="w-full text-sm ink-table">
+              <thead>
+                <tr className="border-b border-border text-left text-muted">
+                  <th className="pb-3">排序</th>
+                  <th className="pb-3">渠道名称</th>
+                  <th className="pb-3">客户数</th>
+                  <th className="pb-3">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {channels.map((ch) => (
+                  <tr key={ch.id} className="border-b border-border/40">
+                    <td className="py-3">{ch.sortOrder}</td>
+                    <td className="py-3 font-medium font-serif">{ch.name}</td>
+                    <td className="py-3">{ch._count.customers}</td>
+                    <td className="py-3 space-x-3">
+                      <button onClick={() => openEdit(ch)} className="text-wine hover:underline text-xs inline-flex items-center gap-0.5">
+                        <Pencil className="h-3 w-3" />编辑
+                      </button>
+                      <button onClick={() => handleDelete(ch.id)} className="text-red-700 hover:underline text-xs inline-flex items-center gap-0.5">
+                        <Trash2 className="h-3 w-3" />删除
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </CardContent>
+      </Card>
+
+      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title={editing ? "编辑渠道" : "新增渠道"}>
+        <div className="space-y-4">
+          <div>
+            <Label>渠道名称 *</Label>
+            <Input value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div>
+            <Label>排序</Label>
+            <Input type="number" value={sortOrder} onChange={(e) => setSortOrder(parseInt(e.target.value) || 0)} />
+          </div>
+          {error && <p className="text-sm text-red-700">{error}</p>}
+        </div>
+        <ModalFooter>
+          <Button variant="secondary" onClick={() => setModalOpen(false)}>取消</Button>
+          <Button onClick={handleSave} disabled={saving}>{saving ? "保存中..." : "保存"}</Button>
+        </ModalFooter>
+      </Modal>
+    </div>
+  );
+}

@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+:root {
+  --ink-bg: #f4efe6;
+  --ink-paper: #faf7f0;
+  --ink-card: rgba(255, 252, 245, 0.92);
+  --ink-fg: #2b2620;
+  --ink-muted: #6e655c;
+  --ink-border: #d9cfc0;
+  --ink-accent: #8b2e2e;
+  --ink-accent-dark: #5c1f1f;
+  --ink-gold: #a67c3d;
+  --ink-wash: rgba(43, 38, 32, 0.06);
+}
+
+@theme inline {
+  --color-background: var(--ink-bg);
+  --color-foreground: var(--ink-fg);
+  --color-wine: var(--ink-accent);
+  --color-wine-dark: var(--ink-accent-dark);
+  --color-wine-light: #a84848;
+  --color-gold: var(--ink-gold);
+  --color-card: var(--ink-card);
+  --color-border: var(--ink-border);
+  --color-muted: var(--ink-muted);
+  --color-paper: var(--ink-paper);
+  --font-sans: var(--font-noto-sans);
+  --font-serif: var(--font-noto-serif);
+}
+
+body {
+  background: var(--ink-bg);
+  background-image:
+    radial-gradient(ellipse at 10% 0%, rgba(139, 46, 46, 0.06), transparent 50%),
+    radial-gradient(ellipse at 90% 100%, rgba(43, 38, 32, 0.05), transparent 45%),
+    url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+  color: var(--ink-fg);
+  font-family: var(--font-sans), "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+h1, h2, h3, .font-serif {
+  font-family: var(--font-serif), "STSong", "SimSun", serif;
+}
+
+.ink-card {
+  background: var(--ink-card);
+  border: 1px solid var(--ink-border);
+  border-radius: 4px;
+  box-shadow: 0 2px 12px rgba(43, 38, 32, 0.06);
+  backdrop-filter: blur(4px);
+}
+
+.ink-divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--ink-border), transparent);
+}
+
+.ink-table th {
+  font-family: var(--font-serif), serif;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+input, select, textarea {
+  font-family: inherit;
+}
+
+* {
+  box-sizing: border-box;
+}

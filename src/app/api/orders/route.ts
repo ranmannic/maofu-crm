@@ -1,0 +1,204 @@
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { prisma } from "@/lib/prisma";
+import { requireSession } from "@/lib/auth";
+import {
+  calcCalculatedAmount,
+  calcProductCostTotal,
+} from "@/lib/order-math";
+import { generateOrderNo } from "@/lib/utils";
+import { apiError, handleApiError } from "@/lib/api";
+import { parsePagination, paginatedResponse } from "@/lib/pagination";
+import { enrichOrderForList } from "@/lib/serializers";
+import { logOrderChange } from "@/lib/order-audit";
+import type { Prisma } from "@/generated/prisma/client";
+
+const orderItemSchema = z.object({
+  productId: z.string(),
+  productSpecId: z.string(),
+  quantity: z.number().int().min(1),
+});
+
+const createOrderSchema = z.object({
+  customerId: z.string(),
+  items: z.array(orderItemSchema).min(1, "至少添加一个产品"),
+  totalAmount: z.number().min(0).optional(),
+  amountAdjustReason: z.string().optional(),
+  notes: z.string().optional(),
+  handlerId: z.string().optional(),
+});
+
+export async function GET(request: NextRequest) {
+  try {
+    const session = await requireSession();
+    const { searchParams } = new URL(request.url);
+    const { page, pageSize, skip, take } = parsePagination(searchParams);
+
+    const customerQ = searchParams.get("customer")?.trim();
+    const salesQ = searchParams.get("sales")?.trim();
+    const orderNoQ = searchParams.get("orderNo")?.trim();
+    const orderedStart = searchParams.get("orderedStart");
+    const orderedEnd = searchParams.get("orderedEnd");
+    const paidStart = searchParams.get("paidStart");
+    const paidEnd = searchParams.get("paidEnd");
+    const isPaid = searchParams.get("isPaid");
+    const isShipped = searchParams.get("isShipped");
+
+    const where: Prisma.OrderWhereInput = {};
+
+    if (session.role === "SALES") {
+      where.salesId = session.id;
+    }
+
+    if (orderNoQ) {
+      where.orderNo = { contains: orderNoQ };
+    }
+
+    if (customerQ) {
+      where.OR = [
+        { customerName: { contains: customerQ } },
+        { customerId: { contains: customerQ } },
+      ];
+    }
+
+    if (salesQ && session.role !== "SALES") {
+      where.sales = {
+        OR: [{ name: { contains: salesQ } }, { id: { contains: salesQ } }],
+      };
+    }
+
+    if (orderedStart || orderedEnd) {
+      where.orderedAt = {};
+      if (orderedStart) where.orderedAt.gte = new Date(orderedStart + "T00:00:00");
+      if (orderedEnd) where.orderedAt.lte = new Date(orderedEnd + "T23:59:59");
+    }
+
+    if (paidStart || paidEnd) {
+      where.paidAt = {};
+      if (paidStart) where.paidAt.gte = new Date(paidStart + "T00:00:00");
+      if (paidEnd) where.paidAt.lte = new Date(paidEnd + "T23:59:59");
+    }
+
+    if (isPaid === "true") where.isPaid = true;
+    if (isPaid === "false") where.isPaid = false;
+    if (isShipped === "true") where.isShipped = true;
+    if (isShipped === "false") where.isShipped = false;
+
+    const isAdmin = session.role === "ADMIN";
+
+    const [orders, total] = await Promise.all([
+      prisma.order.findMany({
+        where,
+        include: {
+          customer: {
+            select: { id: true, name: true, channel: { select: { name: true } } },
+          },
+          sales: { select: { id: true, name: true } },
+          handler: { select: { id: true, name: true } },
+          items: true,
+          shipping: true,
+        },
+        orderBy: { orderedAt: "desc" },
+        skip,
+        take,
+      }),
+      prisma.order.count({ where }),
+    ]);
+
+    const data = orders.map((o) => enrichOrderForList(o, isAdmin));
+    return NextResponse.json(paginatedResponse(data, total, page, pageSize));
+  } catch (error) {
+    return handleApiError(error);
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const session = await requireSession(["SALES", "ADMIN"]);
+    const body = createOrderSchema.parse(await request.json());
+
+    const customer = await prisma.customer.findUnique({
+      where: { id: body.customerId },
+    });
+    if (!customer || customer.deletedAt) return apiError("客户不存在", 404);
+    if (session.role === "SALES" && customer.salesId !== session.id) {
+      return apiError("只能为自己的客户下单", 403);
+    }
+
+    const specIds = body.items.map((i) => i.productSpecId);
+    const specs = await prisma.productSpec.findMany({
+      where: { id: { in: specIds } },
+      include: { product: true },
+    });
+
+    if (specs.length !== body.items.length) {
+      return apiError("部分产品规格不存在");
+    }
+
+    const specMap = new Map(specs.map((s) => [s.id, s]));
+
+    const orderItems = body.items.map((item) => {
+      const spec = specMap.get(item.productSpecId)!;
+      return {
+        productId: spec.productId,
+        productSpecId: spec.id,
+        productName: spec.product.name,
+        specName: spec.name,
+        unitType: spec.unitType,
+        quantity: item.quantity,
+        unitPrice: spec.price,
+        unitCost: spec.cost,
+      };
+    });
+
+    const calculatedAmount = calcCalculatedAmount(orderItems);
+    const productCostTotal = calcProductCostTotal(orderItems);
+    const totalAmount = body.totalAmount ?? calculatedAmount;
+
+    if (totalAmount !== calculatedAmount) {
+      if (!body.amountAdjustReason?.trim()) {
+        return apiError("修改总金额需填写理由");
+      }
+    }
+
+    const order = await prisma.order.create({
+      data: {
+        orderNo: generateOrderNo(),
+        customerId: customer.id,
+        customerName: customer.name,
+        salesId: customer.salesId,
+        handlerId: body.handlerId,
+        calculatedAmount,
+        totalAmount,
+        amountAdjustReason:
+          totalAmount !== calculatedAmount ? body.amountAdjustReason : null,
+        productCostTotal,
+        notes: body.notes,
+        items: { create: orderItems },
+      },
+      include: {
+        items: true,
+        customer: true,
+        sales: { select: { id: true, name: true } },
+        handler: { select: { id: true, name: true } },
+        shipping: true,
+      },
+    });
+
+    await logOrderChange(order.id, session.id, session.name, "创建订单", {
+      orderNo: order.orderNo,
+      totalAmount,
+      calculatedAmount,
+    });
+
+    return NextResponse.json(
+      enrichOrderForList(order, session.role === "ADMIN"),
+      { status: 201 }
+    );
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return apiError(error.issues[0]?.message || "参数错误");
+    }
+    return handleApiError(error);
+  }
+}

@@ -1,0 +1,151 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+enum Role {
+  SALES
+  OPERATIONS
+  ADMIN
+}
+
+enum SpecUnit {
+  BOTTLE
+  BOX
+  PIECE
+  SET
+}
+
+model User {
+  id        String   @id @default(cuid())
+  username  String   @unique
+  password  String
+  name      String
+  role      Role
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customers     Customer[]
+  salesOrders   Order[] @relation("SalesOrders")
+  handledOrders Order[] @relation("HandledOrders")
+}
+
+model ChannelType {
+  id        String     @id @default(cuid())
+  name      String     @unique
+  sortOrder Int        @default(0)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  customers Customer[]
+}
+
+model Customer {
+  id        String       @id @default(cuid())
+  name      String
+  phone     String?
+  channelId String?
+  channel   ChannelType? @relation(fields: [channelId], references: [id])
+  address   String?
+  salesId   String
+  sales     User         @relation(fields: [salesId], references: [id])
+  deletedAt DateTime?
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  orders Order[]
+}
+
+model Product {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  specs ProductSpec[]
+}
+
+model ProductSpec {
+  id        String   @id @default(cuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name      String
+  unitType  SpecUnit @default(BOTTLE)
+  price     Float
+  cost      Float    @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  orderItems OrderItem[]
+}
+
+model Order {
+  id                 String    @id @default(cuid())
+  orderNo            String    @unique
+  customerId         String
+  customer           Customer  @relation(fields: [customerId], references: [id])
+  customerName       String
+  salesId            String
+  sales              User      @relation("SalesOrders", fields: [salesId], references: [id])
+  handlerId          String?
+  handler            User?     @relation("HandledOrders", fields: [handlerId], references: [id])
+  calculatedAmount   Float     @default(0)
+  totalAmount        Float
+  amountAdjustReason String?
+  productCostTotal   Float     @default(0)
+  isPaid             Boolean   @default(false)
+  paidAmount         Float     @default(0)
+  isShipped          Boolean   @default(false)
+  orderedAt          DateTime  @default(now())
+  paidAt             DateTime?
+  notes              String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  items     OrderItem[]
+  shipping  ShippingInfo?
+  auditLogs OrderAuditLog[]
+}
+
+model OrderItem {
+  id            String      @id @default(cuid())
+  orderId       String
+  order         Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId     String
+  productSpecId String
+  productSpec   ProductSpec @relation(fields: [productSpecId], references: [id])
+  productName   String
+  specName      String
+  unitType      SpecUnit    @default(BOTTLE)
+  quantity      Int
+  unitPrice     Float
+  unitCost      Float       @default(0)
+}
+
+model ShippingInfo {
+  id         String    @id @default(cuid())
+  orderId    String    @unique
+  order      Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  carrier    String?
+  trackingNo String?
+  address    String?
+  shippedAt  DateTime?
+  notes      String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+}
+
+model OrderAuditLog {
+  id        String   @id @default(cuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  userId    String
+  userName  String
+  action    String
+  changes   String?
+  createdAt DateTime @default(now())
+}
