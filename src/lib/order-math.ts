@@ -1,3 +1,5 @@
+import type { PaymentStatus } from "@/generated/prisma/client";
+
 export function calcProductCostTotal(
   items: { quantity: number; unitCost: number }[]
 ) {
@@ -10,13 +12,65 @@ export function calcCalculatedAmount(
   return items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
 }
 
-export function calcOrderProfit(totalAmount: number, productCostTotal: number) {
-  return totalAmount - productCostTotal;
+export function calcOrderTotalAmount(
+  productAmount: number,
+  shippingFee: number,
+  otherFee: number
+) {
+  return productAmount + shippingFee + otherFee;
 }
 
-export function calcProfitMargin(totalAmount: number, profit: number) {
-  if (totalAmount <= 0) return 0;
-  return (profit / totalAmount) * 100;
+/** 业绩金额：不含运费与其它费用 */
+export function calcPerformanceAmount(
+  totalAmount: number,
+  shippingFee: number,
+  otherFee: number
+) {
+  return Math.max(0, totalAmount - shippingFee - otherFee);
+}
+
+export function calcOrderProfit(
+  totalAmount: number,
+  productCostTotal: number,
+  shippingFee = 0,
+  otherFee = 0
+) {
+  return (
+    calcPerformanceAmount(totalAmount, shippingFee, otherFee) - productCostTotal
+  );
+}
+
+export function calcProfitMargin(revenue: number, profit: number) {
+  if (revenue <= 0) return 0;
+  return (profit / revenue) * 100;
+}
+
+export function derivePaymentStatus(
+  paidAmount: number,
+  totalAmount: number
+): PaymentStatus {
+  if (paidAmount <= 0) return "UNPAID";
+  if (paidAmount >= totalAmount) return "PAID";
+  return "PARTIAL";
+}
+
+export function syncPaymentFields(
+  paymentStatus: PaymentStatus,
+  paidAmount: number,
+  totalAmount: number
+) {
+  let amount = paidAmount;
+  if (paymentStatus === "UNPAID") amount = 0;
+  else if (paymentStatus === "PAID") amount = totalAmount;
+  else amount = Math.min(Math.max(0, paidAmount), totalAmount);
+
+  const status = derivePaymentStatus(amount, totalAmount);
+  return {
+    paymentStatus: status,
+    paidAmount: amount,
+    isPaid: status === "PAID",
+    paidAt: amount > 0 ? new Date() : null,
+  };
 }
 
 export function formatItemsSummary(

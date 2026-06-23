@@ -25,7 +25,7 @@ export async function GET(
       where: { id },
       include: {
         sales: { select: { id: true, name: true } },
-        channel: { select: { id: true, name: true } },
+        channel: { select: { id: true, name: true, parent: { select: { id: true, name: true } } } },
         orders: { orderBy: { orderedAt: "desc" }, take: 20 },
       },
     });
@@ -81,7 +81,7 @@ export async function PATCH(
       data,
       include: {
         sales: { select: { id: true, name: true } },
-        channel: { select: { id: true, name: true } },
+        channel: { select: { id: true, name: true, parent: { select: { id: true, name: true } } } },
       },
     });
 
@@ -109,6 +109,9 @@ export async function DELETE(
       if (existing.salesId !== session.id) {
         return apiError("无权限", 403);
       }
+      if (existing.deletedAt) {
+        return apiError("客户已删除", 400);
+      }
       await prisma.customer.update({
         where: { id },
         data: { deletedAt: new Date() },
@@ -117,8 +120,14 @@ export async function DELETE(
     }
 
     if (session.role === "ADMIN") {
-      await prisma.customer.delete({ where: { id } });
-      return NextResponse.json({ success: true });
+      if (existing.deletedAt) {
+        return apiError("客户已删除", 400);
+      }
+      await prisma.customer.update({
+        where: { id },
+        data: { deletedAt: new Date() },
+      });
+      return NextResponse.json({ success: true, softDeleted: true });
     }
 
     return apiError("无权限", 403);

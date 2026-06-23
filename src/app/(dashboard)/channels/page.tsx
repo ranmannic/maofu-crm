@@ -5,13 +5,16 @@ import { Plus, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Modal, ModalFooter } from "@/components/ui/modal";
-import { Input, Label } from "@/components/ui/input";
+import { Input, Label, Select } from "@/components/ui/input";
 
 interface Channel {
   id: string;
   name: string;
   sortOrder: number;
-  _count: { customers: number };
+  parentId: string | null;
+  parent?: { id: string; name: string } | null;
+  children?: { id: string; name: string; sortOrder: number }[];
+  _count: { customers: number; children: number };
 }
 
 export default function ChannelsPage() {
@@ -21,8 +24,11 @@ export default function ChannelsPage() {
   const [editing, setEditing] = useState<Channel | null>(null);
   const [name, setName] = useState("");
   const [sortOrder, setSortOrder] = useState(0);
+  const [parentId, setParentId] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+
+  const topLevel = channels.filter((c) => !c.parentId);
 
   async function load() {
     setLoading(true);
@@ -33,10 +39,11 @@ export default function ChannelsPage() {
 
   useEffect(() => { load(); }, []);
 
-  function openCreate() {
+  function openCreate(parent?: string) {
     setEditing(null);
     setName("");
     setSortOrder(channels.length);
+    setParentId(parent || "");
     setError("");
     setModalOpen(true);
   }
@@ -45,6 +52,7 @@ export default function ChannelsPage() {
     setEditing(ch);
     setName(ch.name);
     setSortOrder(ch.sortOrder);
+    setParentId(ch.parentId || "");
     setModalOpen(true);
   }
 
@@ -56,7 +64,11 @@ export default function ChannelsPage() {
     const res = await fetch(url, {
       method,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, sortOrder }),
+      body: JSON.stringify({
+        name,
+        sortOrder,
+        parentId: parentId || null,
+      }),
     });
     const data = await res.json();
     if (!res.ok) {
@@ -77,18 +89,50 @@ export default function ChannelsPage() {
     else await load();
   }
 
+  function renderRow(ch: Channel, level: number) {
+    const isTop = level === 0;
+    return (
+      <tr key={ch.id} className="border-b border-border/40">
+        <td className="py-3">{ch.sortOrder}</td>
+        <td className="py-3 font-medium font-serif">
+          <span style={{ paddingLeft: level * 20 }}>
+            {isTop ? "【一级】" : "└ "}
+            {ch.name}
+          </span>
+        </td>
+        <td className="py-3">{isTop ? ch._count.children : ch._count.customers}</td>
+        <td className="py-3 space-x-3">
+          {isTop && (
+            <button
+              onClick={() => openCreate(ch.id)}
+              className="text-muted hover:underline text-xs"
+            >
+              添加二级
+            </button>
+          )}
+          <button onClick={() => openEdit(ch)} className="text-wine hover:underline text-xs inline-flex items-center gap-0.5">
+            <Pencil className="h-3 w-3" />编辑
+          </button>
+          <button onClick={() => handleDelete(ch.id)} className="text-red-700 hover:underline text-xs inline-flex items-center gap-0.5">
+            <Trash2 className="h-3 w-3" />删除
+          </button>
+        </td>
+      </tr>
+    );
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-serif font-bold">渠道类型管理</h1>
           <p className="text-muted text-sm mt-1 font-serif">
-            配置客户渠道分类，用于客户建档与统计
+            两级渠道分类：一级业务类型 + 二级销售渠道
           </p>
         </div>
-        <Button onClick={openCreate}>
+        <Button onClick={() => openCreate()}>
           <Plus className="h-4 w-4 mr-1" />
-          新增渠道
+          新增一级分类
         </Button>
       </div>
 
@@ -102,34 +146,44 @@ export default function ChannelsPage() {
                 <tr className="border-b border-border text-left text-muted">
                   <th className="pb-3">排序</th>
                   <th className="pb-3">渠道名称</th>
-                  <th className="pb-3">客户数</th>
+                  <th className="pb-3">子渠道/客户数</th>
                   <th className="pb-3">操作</th>
                 </tr>
               </thead>
               <tbody>
-                {channels.map((ch) => (
-                  <tr key={ch.id} className="border-b border-border/40">
-                    <td className="py-3">{ch.sortOrder}</td>
-                    <td className="py-3 font-medium font-serif">{ch.name}</td>
-                    <td className="py-3">{ch._count.customers}</td>
-                    <td className="py-3 space-x-3">
-                      <button onClick={() => openEdit(ch)} className="text-wine hover:underline text-xs inline-flex items-center gap-0.5">
-                        <Pencil className="h-3 w-3" />编辑
-                      </button>
-                      <button onClick={() => handleDelete(ch.id)} className="text-red-700 hover:underline text-xs inline-flex items-center gap-0.5">
-                        <Trash2 className="h-3 w-3" />删除
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {topLevel.flatMap((parent) => {
+                  const children = channels.filter((c) => c.parentId === parent.id);
+                  return [renderRow(parent, 0), ...children.map((c) => renderRow(c, 1))];
+                })}
               </tbody>
             </table>
           )}
         </CardContent>
       </Card>
 
-      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title={editing ? "编辑渠道" : "新增渠道"}>
+      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title={editing ? "编辑渠道" : parentId ? "新增二级渠道" : "新增一级分类"}>
         <div className="space-y-4">
+          {!editing && (
+            <div>
+              <Label>上级分类</Label>
+              <Select
+                value={parentId}
+                onChange={(e) => setParentId(e.target.value)}
+                disabled={!!editing}
+              >
+                <option value="">一级分类（无上级）</option>
+                {topLevel.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </Select>
+            </div>
+          )}
+          {editing && editing.parent && (
+            <div>
+              <Label>上级分类</Label>
+              <Input value={editing.parent.name} readOnly className="bg-paper" />
+            </div>
+          )}
           <div>
             <Label>渠道名称 *</Label>
             <Input value={name} onChange={(e) => setName(e.target.value)} />

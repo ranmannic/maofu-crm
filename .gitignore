@@ -40,6 +40,9 @@ yarn-error.log*
 *.db
 *.db-journal
 
+# local node runtime (dev only)
+.node/
+
 # vercel
 .vercel
 

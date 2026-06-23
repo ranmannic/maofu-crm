@@ -1,10 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/input";
 import { YoYCurveChart } from "@/components/dashboard/yoy-chart";
 import { ChannelPieChart } from "@/components/dashboard/channel-pie-chart";
+import { CategoryPerformanceSection } from "@/components/dashboard/category-performance-section";
+import { ADMIN_DASHBOARD_DATA_VISIBLE_KEY } from "@/lib/constants";
 import { formatCurrency } from "@/lib/utils";
 import type { SessionUser } from "@/lib/auth-types";
 
@@ -28,6 +32,13 @@ interface StatsData {
     amount: number;
     customerCount: number;
   }[];
+  categoryPerformanceStats?: {
+    categoryId: string;
+    categoryName: string;
+    totalAmount: number;
+    orderCount: number;
+    channels: { channel: string; orderCount: number; amount: number }[];
+  }[];
   salesStats?: {
     salesId: string;
     salesName: string;
@@ -50,6 +61,18 @@ export function DashboardPage({ user }: { user: SessionUser }) {
   const [salesId, setSalesId] = useState("");
   const [stats, setStats] = useState<StatsData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [dataVisible, setDataVisible] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return sessionStorage.getItem(ADMIN_DASHBOARD_DATA_VISIBLE_KEY) === "true";
+  });
+
+  function toggleDataVisible() {
+    setDataVisible((prev) => {
+      const next = !prev;
+      sessionStorage.setItem(ADMIN_DASHBOARD_DATA_VISIBLE_KEY, String(next));
+      return next;
+    });
+  }
 
   useEffect(() => {
     async function load() {
@@ -62,6 +85,8 @@ export function DashboardPage({ user }: { user: SessionUser }) {
     }
     load();
   }, [period, salesId]);
+
+  const hidden = isAdmin && !dataVisible;
 
   const customerPieData =
     stats?.customerStats.byChannel.map((c) => ({
@@ -87,6 +112,26 @@ export function DashboardPage({ user }: { user: SessionUser }) {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {isAdmin && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={toggleDataVisible}
+              title={dataVisible ? "隐藏数据" : "显示数据"}
+            >
+              {dataVisible ? (
+                <>
+                  <EyeOff className="h-4 w-4 mr-1" />
+                  隐藏数据
+                </>
+              ) : (
+                <>
+                  <Eye className="h-4 w-4 mr-1" />
+                  显示数据
+                </>
+              )}
+            </Button>
+          )}
           {isAdmin && stats?.salesUsers && (
             <Select
               value={salesId}
@@ -118,53 +163,83 @@ export function DashboardPage({ user }: { user: SessionUser }) {
       ) : stats ? (
         <>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <StatCard title="订单数" value={String(stats.orderStats.total)} />
             <StatCard
-              title="订单总额"
-              value={formatCurrency(stats.orderStats.totalAmount)}
+              title="订单数"
+              value={hidden ? "****" : String(stats.orderStats.total)}
+            />
+            <StatCard
+              title="业绩总额"
+              value={
+                hidden ? "****" : formatCurrency(stats.orderStats.totalAmount)
+              }
             />
             <StatCard
               title="已收款"
-              value={formatCurrency(stats.orderStats.paidAmount)}
+              value={
+                hidden ? "****" : formatCurrency(stats.orderStats.paidAmount)
+              }
             />
             {isAdmin && stats.orderStats.totalProfit !== undefined && (
               <StatCard
                 title="订单毛利"
-                value={formatCurrency(stats.orderStats.totalProfit)}
+                value={
+                  hidden
+                    ? "****"
+                    : formatCurrency(stats.orderStats.totalProfit)
+                }
                 highlight
               />
             )}
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            <ChannelPieChart
-              title="客户渠道分布"
-              data={customerPieData}
-            />
-            <ChannelPieChart
-              title="业绩渠道分布"
-              data={performancePieData}
-              formatValue={(v) => formatCurrency(v)}
-            />
+          <div
+            className={
+              hidden ? "blur-md pointer-events-none select-none" : undefined
+            }
+          >
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+              <ChannelPieChart
+                title="客户渠道分布"
+                data={customerPieData}
+              />
+              <ChannelPieChart
+                title="业绩渠道分布"
+                data={performancePieData}
+                formatValue={(v) => formatCurrency(v)}
+              />
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-            <YoYCurveChart
-              title="业绩曲线"
-              data={stats.monthlyCurves.performance}
-              valueLabel="订单金额"
-              formatValue={(v) => formatCurrency(v)}
+          {isAdmin && stats.categoryPerformanceStats && (
+            <CategoryPerformanceSection
+              data={stats.categoryPerformanceStats}
+              hidden={hidden}
             />
-            <YoYCurveChart
-              title="新增客户曲线"
-              data={stats.monthlyCurves.newCustomers}
-              valueLabel="新增客户数"
-            />
-            <YoYCurveChart
-              title="流失客户曲线"
-              data={stats.monthlyCurves.churnCustomers}
-              valueLabel="流失客户数"
-            />
+          )}
+
+          <div
+            className={
+              hidden ? "blur-md pointer-events-none select-none" : undefined
+            }
+          >
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+              <YoYCurveChart
+                title="业绩曲线"
+                data={stats.monthlyCurves.performance}
+                valueLabel="业绩金额"
+                formatValue={(v) => formatCurrency(v)}
+              />
+              <YoYCurveChart
+                title="新增客户曲线"
+                data={stats.monthlyCurves.newCustomers}
+                valueLabel="新增客户数"
+              />
+              <YoYCurveChart
+                title="流失客户曲线"
+                data={stats.monthlyCurves.churnCustomers}
+                valueLabel="流失客户数"
+              />
+            </div>
           </div>
 
           <Card>
@@ -178,16 +253,20 @@ export function DashboardPage({ user }: { user: SessionUser }) {
                     <th className="pb-3">渠道</th>
                     <th className="pb-3">客户数</th>
                     <th className="pb-3">订单数</th>
-                    <th className="pb-3">订单金额</th>
+                    <th className="pb-3">业绩金额</th>
                   </tr>
                 </thead>
                 <tbody>
                   {stats.channelStats.map((row) => (
                     <tr key={row.channel} className="border-b border-border/40">
-                      <td className="py-3 font-medium">{row.channel}</td>
-                      <td className="py-3">{row.customerCount}</td>
-                      <td className="py-3">{row.orderCount}</td>
-                      <td className="py-3">{formatCurrency(row.amount)}</td>
+                      <td className="py-3 font-medium">
+                        {hidden ? "****" : row.channel}
+                      </td>
+                      <td className="py-3">{hidden ? "**" : row.customerCount}</td>
+                      <td className="py-3">{hidden ? "**" : row.orderCount}</td>
+                      <td className="py-3">
+                        {hidden ? "****" : formatCurrency(row.amount)}
+                      </td>
                     </tr>
                   ))}
                   {stats.channelStats.length === 0 && (
@@ -213,7 +292,7 @@ export function DashboardPage({ user }: { user: SessionUser }) {
                     <tr className="border-b border-border text-left text-muted">
                       <th className="pb-3">销售</th>
                       <th className="pb-3">订单数</th>
-                      <th className="pb-3">订单金额</th>
+                      <th className="pb-3">业绩金额</th>
                       <th className="pb-3">已收款</th>
                       <th className="pb-3">毛利</th>
                     </tr>
@@ -221,12 +300,16 @@ export function DashboardPage({ user }: { user: SessionUser }) {
                   <tbody>
                     {stats.salesStats.map((row) => (
                       <tr key={row.salesId} className="border-b border-border/40">
-                        <td className="py-3">{row.salesName}</td>
-                        <td className="py-3">{row.orderCount}</td>
-                        <td className="py-3">{formatCurrency(row.totalAmount)}</td>
-                        <td className="py-3">{formatCurrency(row.paidAmount)}</td>
+                        <td className="py-3">{hidden ? "****" : row.salesName}</td>
+                        <td className="py-3">{hidden ? "**" : row.orderCount}</td>
+                        <td className="py-3">
+                          {hidden ? "****" : formatCurrency(row.totalAmount)}
+                        </td>
+                        <td className="py-3">
+                          {hidden ? "****" : formatCurrency(row.paidAmount)}
+                        </td>
                         <td className="py-3 text-wine font-medium">
-                          {formatCurrency(row.profit)}
+                          {hidden ? "****" : formatCurrency(row.profit)}
                         </td>
                       </tr>
                     ))}

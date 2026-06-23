@@ -13,19 +13,92 @@ function resolveDbPath() {
 const adapter = new PrismaBetterSqlite3({ url: resolveDbPath() });
 const prisma = new PrismaClient({ adapter });
 
+const CHANNEL_TREE: { category: string; children: string[] }[] = [
+  { category: "团购业务", children: ["团购客户", "高端烟酒店"] },
+  {
+    category: "批发业务",
+    children: ["烟酒杂货店", "超市便利店", "礼品店", "村商店"],
+  },
+  { category: "直销业务", children: ["线上直销", "线下直销", "外部销售"] },
+  { category: "分销业务", children: ["线上分销", "红白事渠道"] },
+  { category: "特渠业务", children: ["内部渠道"] },
+];
+
+async function seedChannels() {
+  const channelMap: Record<string, string> = {};
+  const validNames = new Set<string>();
+
+  for (let i = 0; i < CHANNEL_TREE.length; i++) {
+    const { category, children } = CHANNEL_TREE[i];
+    validNames.add(category);
+    children.forEach((name) => validNames.add(name));
+
+    const parent = await prisma.channelType.upsert({
+      where: { name: category },
+      update: { sortOrder: i, parentId: null },
+      create: { name: category, sortOrder: i, parentId: null },
+    });
+    channelMap[category] = parent.id;
+
+    for (let j = 0; j < children.length; j++) {
+      const childName = children[j];
+      const child = await prisma.channelType.upsert({
+        where: { name: childName },
+        update: { sortOrder: j, parentId: parent.id },
+        create: {
+          name: childName,
+          sortOrder: j,
+          parentId: parent.id,
+        },
+      });
+      channelMap[childName] = child.id;
+    }
+  }
+
+  // 将仍挂在旧渠道上的客户迁移到新二级渠道
+  const defaultChildId = channelMap["团购客户"];
+  const staleWithCustomers = await prisma.channelType.findMany({
+    where: {
+      name: { notIn: [...validNames] },
+    },
+    select: { id: true },
+  });
+  if (staleWithCustomers.length > 0) {
+    await prisma.customer.updateMany({
+      where: { channelId: { in: staleWithCustomers.map((c) => c.id) } },
+      data: { channelId: defaultChildId },
+    });
+  }
+
+  // 清理旧版一级渠道（无 parentId 且不在新分类体系中）
+  const stale = await prisma.channelType.findMany({
+    where: {
+      parentId: null,
+      name: { notIn: [...validNames] },
+    },
+    include: { _count: { select: { customers: true, children: true } } },
+  });
+
+  for (const ch of stale) {
+    if (ch._count.customers > 0 || ch._count.children > 0) continue;
+    await prisma.channelType.delete({ where: { id: ch.id } });
+  }
+
+  // 清理其它不在新体系中的孤立二级/旧渠道
+  await prisma.channelType.deleteMany({
+    where: {
+      name: { notIn: [...validNames] },
+      customers: { none: {} },
+      children: { none: {} },
+    },
+  });
+
+  return channelMap;
+}
+
 async function main() {
   const password = await bcrypt.hash("123456", 10);
-
-  const channels = await Promise.all(
-    ["线下经销", "电商", "会所", "团购", "其他"].map((name, i) =>
-      prisma.channelType.upsert({
-        where: { name },
-        update: {},
-        create: { name, sortOrder: i },
-      })
-    )
-  );
-  const channelMap = Object.fromEntries(channels.map((c) => [c.name, c.id]));
+  const channelMap = await seedChannels();
 
   const sales1 = await prisma.user.upsert({
     where: { username: "sales01" },
@@ -108,36 +181,45 @@ async function main() {
   const customers = await Promise.all([
     prisma.customer.upsert({
       where: { id: "seed-customer-1" },
-      update: {},
+      update: {
+        channelId: channelMap["团购客户"],
+        deletedAt: null,
+      },
       create: {
         id: "seed-customer-1",
         name: "北京华盛商贸",
         phone: "13800138001",
-        channelId: channelMap["线下经销"],
+        channelId: channelMap["团购客户"],
         address: "北京市朝阳区",
         salesId: sales1.id,
       },
     }),
     prisma.customer.upsert({
       where: { id: "seed-customer-2" },
-      update: {},
+      update: {
+        channelId: channelMap["线上直销"],
+        deletedAt: null,
+      },
       create: {
         id: "seed-customer-2",
         name: "上海品酒汇",
         phone: "13900139002",
-        channelId: channelMap["电商"],
+        channelId: channelMap["线上直销"],
         address: "上海市浦东新区",
         salesId: sales1.id,
       },
     }),
     prisma.customer.upsert({
       where: { id: "seed-customer-3" },
-      update: {},
+      update: {
+        channelId: channelMap["高端烟酒店"],
+        deletedAt: null,
+      },
       create: {
         id: "seed-customer-3",
         name: "广州酒文化会所",
         phone: "13700137003",
-        channelId: channelMap["会所"],
+        channelId: channelMap["高端烟酒店"],
         address: "广州市天河区",
         salesId: sales2.id,
       },
@@ -146,23 +228,40 @@ async function main() {
 
   const spec1 = product1.specs[0];
   const spec2 = product2.specs[0];
-  const calc1 = spec1.price * 10;
+  const productAmount1 = spec1.price * 10;
   const cost1 = spec1.cost * 10;
+  const shippingFee1 = 120;
+  const otherFee1 = 0;
+  const calculated1 = productAmount1 + shippingFee1 + otherFee1;
 
   await prisma.order.upsert({
     where: { orderNo: "MF202506220001" },
-    update: {},
+    update: {
+      productAmount: productAmount1,
+      shippingFee: shippingFee1,
+      otherFee: otherFee1,
+      calculatedAmount: calculated1,
+      totalAmount: calculated1,
+      productCostTotal: cost1,
+      paymentStatus: "PAID",
+      isPaid: true,
+      paidAmount: calculated1,
+    },
     create: {
       orderNo: "MF202506220001",
       customerId: customers[0].id,
       customerName: customers[0].name,
       salesId: sales1.id,
       handlerId: ops.id,
-      calculatedAmount: calc1,
-      totalAmount: calc1,
+      productAmount: productAmount1,
+      shippingFee: shippingFee1,
+      otherFee: otherFee1,
+      calculatedAmount: calculated1,
+      totalAmount: calculated1,
       productCostTotal: cost1,
+      paymentStatus: "PAID",
       isPaid: true,
-      paidAmount: calc1,
+      paidAmount: calculated1,
       isShipped: true,
       orderedAt: new Date(),
       paidAt: new Date(),
@@ -192,25 +291,43 @@ async function main() {
     },
   });
 
-  const calc2 = spec2.price * 5 + product1.specs[1].price * 2;
+  const productAmount2 = spec2.price * 5 + product1.specs[1].price * 2;
   const cost2 = spec2.cost * 5 + product1.specs[1].cost * 2;
+  const shippingFee2 = 80;
+  const otherFee2 = 50;
+  const calculated2 = productAmount2 + shippingFee2 + otherFee2;
 
   await prisma.order.upsert({
     where: { orderNo: "MF202506220002" },
-    update: {},
+    update: {
+      productAmount: productAmount2,
+      shippingFee: shippingFee2,
+      otherFee: otherFee2,
+      calculatedAmount: calculated2,
+      totalAmount: calculated2,
+      productCostTotal: cost2,
+      paymentStatus: "PARTIAL",
+      isPaid: false,
+      paidAmount: 1000,
+    },
     create: {
       orderNo: "MF202506220002",
       customerId: customers[1].id,
       customerName: customers[1].name,
       salesId: sales1.id,
-      calculatedAmount: calc2,
-      totalAmount: calc2,
+      productAmount: productAmount2,
+      shippingFee: shippingFee2,
+      otherFee: otherFee2,
+      calculatedAmount: calculated2,
+      totalAmount: calculated2,
       productCostTotal: cost2,
+      paymentStatus: "PARTIAL",
       isPaid: false,
-      paidAmount: 0,
+      paidAmount: 1000,
       isShipped: false,
       orderedAt: new Date(),
-      notes: "待收款",
+      paidAt: new Date(),
+      notes: "部分收款",
       items: {
         create: [
           {
@@ -239,6 +356,8 @@ async function main() {
   });
 
   console.log("Seed completed:");
+  console.log(`  Channels: ${Object.keys(channelMap).length} (5 categories + 12 sub-channels)`);
+  console.log(`  Customers: ${customers.length} demo records`);
   console.log("  Admin: admin / 123456");
   console.log("  Sales: sales01, sales02 / 123456");
   console.log("  Ops: ops01 / 123456");

@@ -20,6 +20,12 @@ enum SpecUnit {
   SET
 }
 
+enum PaymentStatus {
+  UNPAID
+  PARTIAL
+  PAID
+}
+
 model User {
   id        String   @id @default(cuid())
   username  String   @unique
@@ -35,11 +41,14 @@ model User {
 }
 
 model ChannelType {
-  id        String     @id @default(cuid())
-  name      String     @unique
-  sortOrder Int        @default(0)
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  id        String        @id @default(cuid())
+  name      String        @unique
+  sortOrder Int           @default(0)
+  parentId  String?
+  parent    ChannelType?  @relation("ChannelHierarchy", fields: [parentId], references: [id])
+  children  ChannelType[] @relation("ChannelHierarchy")
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
   customers Customer[]
 }
 
@@ -93,16 +102,21 @@ model Order {
   sales              User      @relation("SalesOrders", fields: [salesId], references: [id])
   handlerId          String?
   handler            User?     @relation("HandledOrders", fields: [handlerId], references: [id])
-  calculatedAmount   Float     @default(0)
+  productAmount      Float         @default(0)
+  shippingFee        Float         @default(0)
+  otherFee           Float         @default(0)
+  calculatedAmount   Float         @default(0)
   totalAmount        Float
   amountAdjustReason String?
-  productCostTotal   Float     @default(0)
-  isPaid             Boolean   @default(false)
-  paidAmount         Float     @default(0)
+  productCostTotal   Float         @default(0)
+  paymentStatus      PaymentStatus @default(UNPAID)
+  isPaid             Boolean       @default(false)
+  paidAmount         Float         @default(0)
   isShipped          Boolean   @default(false)
   orderedAt          DateTime  @default(now())
   paidAt             DateTime?
   notes              String?
+  deletedAt          DateTime?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 

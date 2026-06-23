@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Plus, Eye, History, Search } from "lucide-react";
+import { Plus, Eye, History, Search, Trash2, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -27,10 +27,14 @@ interface Order {
   orderNo: string;
   customerId: string;
   customerName: string;
+  productAmount?: number;
+  shippingFee?: number;
+  otherFee?: number;
   calculatedAmount: number;
   totalAmount: number;
   amountAdjustReason: string | null;
-  productCostTotal: number;
+  productCostTotal?: number;
+  paymentStatus: "UNPAID" | "PARTIAL" | "PAID";
   isPaid: boolean;
   paidAmount: number;
   isShipped: boolean;
@@ -39,6 +43,7 @@ interface Order {
   notes: string | null;
   profit?: number;
   profitMargin?: number;
+  performanceAmount?: number;
   itemsSummary?: string;
   sales: { id: string; name: string };
   handler: { id: string; name: string } | null;
@@ -58,6 +63,8 @@ interface Order {
     notes: string | null;
   } | null;
   auditLogs?: AuditLog[];
+  isDeleted?: boolean;
+  deletedAt?: string | null;
 }
 
 interface Customer { id: string; name: string }
@@ -68,8 +75,19 @@ interface Product {
 }
 interface OpsUser { id: string; name: string }
 
+function getPaymentBadge(order: Order) {
+  if (order.paymentStatus === "PAID" || order.isPaid) {
+    return { variant: "success" as const, label: "已收" };
+  }
+  if (order.paymentStatus === "PARTIAL" || order.paidAmount > 0) {
+    return { variant: "wine" as const, label: "部分收" };
+  }
+  return { variant: "warning" as const, label: "未收" };
+}
+
 export function OrdersPage({ user }: { user: SessionUser }) {
   const canCreate = ["SALES", "ADMIN"].includes(user.role);
+  const canDelete = ["SALES", "ADMIN"].includes(user.role);
   const canManageOps = ["OPERATIONS", "ADMIN"].includes(user.role);
   const isAdmin = user.role === "ADMIN";
 
@@ -88,11 +106,15 @@ export function OrdersPage({ user }: { user: SessionUser }) {
     paidStart: "",
     paidEnd: "",
     isPaid: "",
+    paymentStatus: "",
     isShipped: "",
+    showDeleted: "",
   };
 
   const [appliedFilters, setAppliedFilters] = useState(emptyOrderFilters);
   const [filterDraft, setFilterDraft] = useState({ ...emptyOrderFilters });
+  const [draftShowDeleted, setDraftShowDeleted] = useState(false);
+  const [appliedShowDeleted, setAppliedShowDeleted] = useState(false);
 
   const isSales = user.role === "SALES";
 
@@ -108,13 +130,20 @@ export function OrdersPage({ user }: { user: SessionUser }) {
     customerId: "",
     handlerId: "",
     notes: "",
+    shippingFee: 0,
+    otherFee: 0,
     totalAmount: 0,
     amountAdjustReason: "",
     items: [{ productSpecId: "", quantity: 1 }],
   });
+  const [productAmountPreview, setProductAmountPreview] = useState(0);
   const [calculatedPreview, setCalculatedPreview] = useState(0);
 
-  const [paymentForm, setPaymentForm] = useState({ isPaid: false, paidAmount: 0, paidAt: "" });
+  const [paymentForm, setPaymentForm] = useState({
+    paymentStatus: "UNPAID" as "UNPAID" | "PARTIAL" | "PAID",
+    paidAmount: 0,
+    paidAt: "",
+  });
   const [shippingForm, setShippingForm] = useState({
     isShipped: false, carrier: "", trackingNo: "", address: "", shippedAt: "", notes: "",
   });
@@ -131,6 +160,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
       pageSize: String(DEFAULT_PAGE_SIZE),
     });
     Object.entries(appliedFilters).forEach(([k, v]) => { if (v) params.set(k, v); });
+    if (appliedShowDeleted) params.set("showDeleted", "true");
 
     const res = await fetch(`/api/orders?${params}`);
     if (res.ok) {
@@ -140,18 +170,21 @@ export function OrdersPage({ user }: { user: SessionUser }) {
       setTotalPages(json.pagination.totalPages);
     }
     setLoading(false);
-  }, [page, appliedFilters]);
+  }, [page, appliedFilters, appliedShowDeleted]);
 
   useEffect(() => { loadOrders(); }, [loadOrders]);
 
   function handleSearch() {
     setAppliedFilters({ ...filterDraft });
+    setAppliedShowDeleted(draftShowDeleted);
     setPage(1);
   }
 
   function handleResetFilters() {
     setFilterDraft({ ...emptyOrderFilters });
     setAppliedFilters({ ...emptyOrderFilters });
+    setDraftShowDeleted(false);
+    setAppliedShowDeleted(false);
     setPage(1);
   }
 
@@ -177,13 +210,15 @@ export function OrdersPage({ user }: { user: SessionUser }) {
 
   useEffect(() => {
     if (createOpen && products.length > 0) {
-      const calc = calcFromItems(createForm.items);
+      const productAmount = calcFromItems(createForm.items);
+      const calc = productAmount + (createForm.shippingFee || 0) + (createForm.otherFee || 0);
+      setProductAmountPreview(productAmount);
       setCalculatedPreview(calc);
       if (!createForm.amountAdjustReason) {
         setCreateForm((f) => ({ ...f, totalAmount: calc }));
       }
     }
-  }, [createForm.items, products, createOpen]);
+  }, [createForm.items, createForm.shippingFee, createForm.otherFee, products, createOpen]);
 
   async function loadCreateData() {
     const [cRes, pRes, uRes] = await Promise.all([
@@ -202,6 +237,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
   function openCreate() {
     setCreateForm({
       customerId: "", handlerId: "", notes: "",
+      shippingFee: 0, otherFee: 0,
       totalAmount: 0, amountAdjustReason: "",
       items: [{ productSpecId: "", quantity: 1 }],
     });
@@ -216,7 +252,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
       const full = await res.json();
       setSelected(full);
       setPaymentForm({
-        isPaid: full.isPaid,
+        paymentStatus: full.paymentStatus || (full.isPaid ? "PAID" : full.paidAmount > 0 ? "PARTIAL" : "UNPAID"),
         paidAmount: full.paidAmount,
         paidAt: full.paidAt ? full.paidAt.slice(0, 16) : "",
       });
@@ -251,6 +287,8 @@ export function OrdersPage({ user }: { user: SessionUser }) {
       customerId: createForm.customerId,
       handlerId: createForm.handlerId || undefined,
       notes: createForm.notes || undefined,
+      shippingFee: createForm.shippingFee || 0,
+      otherFee: createForm.otherFee || 0,
       items,
     };
 
@@ -304,6 +342,32 @@ export function OrdersPage({ user }: { user: SessionUser }) {
     setSelected(data);
     await loadOrders();
     setSaving(false);
+  }
+
+  async function handleDelete(order: Order) {
+    if (!confirm(`确定删除订单「${order.orderNo}」？`)) return;
+    const res = await fetch(`/api/orders/${order.id}`, { method: "DELETE" });
+    const data = await res.json();
+    if (!res.ok) {
+      alert(data.error || "删除失败");
+      return;
+    }
+    if (detailOpen && selected?.id === order.id) setDetailOpen(false);
+    await loadOrders();
+  }
+
+  async function handleRestore(order: Order) {
+    const res = await fetch(`/api/orders/${order.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ restore: true }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      alert(data.error || "恢复失败");
+      return;
+    }
+    await loadOrders();
   }
 
   const specs = getAllSpecs();
@@ -360,6 +424,14 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                     }
                   />
                 </FilterField>
+                <label className="flex items-center gap-2 text-sm text-muted pb-2">
+                  <input
+                    type="checkbox"
+                    checked={draftShowDeleted}
+                    onChange={(e) => setDraftShowDeleted(e.target.checked)}
+                  />
+                  仅显示已删除
+                </label>
               </>
             ) : (
               <>
@@ -428,14 +500,20 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                 </FilterField>
                 <FilterField label="付款状态">
                   <Select
-                    value={filterDraft.isPaid}
-                    onChange={(e) =>
-                      setFilterDraft({ ...filterDraft, isPaid: e.target.value })
-                    }
+                    value={filterDraft.paymentStatus || filterDraft.isPaid}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v === "true" || v === "false") {
+                        setFilterDraft({ ...filterDraft, isPaid: v, paymentStatus: "" });
+                      } else {
+                        setFilterDraft({ ...filterDraft, paymentStatus: v, isPaid: "" });
+                      }
+                    }}
                   >
                     <option value="">全部</option>
-                    <option value="true">已付款</option>
                     <option value="false">未付款</option>
+                    <option value="PARTIAL">部分付款</option>
+                    <option value="true">已付款</option>
                   </Select>
                 </FilterField>
                 <FilterField label="发货状态">
@@ -450,6 +528,14 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                     <option value="false">未发货</option>
                   </Select>
                 </FilterField>
+                <label className="flex items-center gap-2 text-sm text-muted pb-2">
+                  <input
+                    type="checkbox"
+                    checked={draftShowDeleted}
+                    onChange={(e) => setDraftShowDeleted(e.target.checked)}
+                  />
+                  仅显示已删除
+                </label>
               </>
             )}
             <Button onClick={handleSearch}>
@@ -484,8 +570,13 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                   </thead>
                   <tbody>
                     {orders.map((o) => (
-                      <tr key={o.id} className="border-b border-border/40">
-                        <td className="py-3 font-mono text-xs">{o.orderNo}</td>
+                      <tr key={o.id} className={`border-b border-border/40 ${o.isDeleted ? "opacity-60" : ""}`}>
+                        <td className="py-3 font-mono text-xs">
+                          {o.orderNo}
+                          {o.isDeleted && (
+                            <Badge variant="warning" className="ml-1">已删除</Badge>
+                          )}
+                        </td>
                         <td className="py-3">{o.customerName}</td>
                         <td className="py-3 text-xs max-w-[180px] truncate" title={o.itemsSummary}>{o.itemsSummary}</td>
                         <td className="py-3">{o.sales.name}</td>
@@ -497,9 +588,17 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                           <td className="py-3 text-wine">{o.profitMargin !== undefined ? `${o.profitMargin.toFixed(1)}%` : "-"}</td>
                         )}
                         <td className="py-3">
-                          <Badge variant={o.isPaid ? "success" : "warning"}>
-                            {o.isPaid ? "已收" : "未收"}
-                          </Badge>
+                          {(() => {
+                            const badge = getPaymentBadge(o);
+                            return (
+                              <Badge variant={badge.variant}>
+                                {badge.label}
+                                {o.paymentStatus === "PARTIAL" && o.paidAmount > 0
+                                  ? ` ${formatCurrency(o.paidAmount)}`
+                                  : ""}
+                              </Badge>
+                            );
+                          })()}
                         </td>
                         <td className="py-3">
                           <Badge variant={o.isShipped ? "success" : "default"}>
@@ -508,9 +607,21 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                         </td>
                         <td className="py-3">{formatDate(o.orderedAt)}</td>
                         <td className="py-3">
-                          <button onClick={() => openDetail(o)} className="text-wine hover:underline text-xs inline-flex items-center gap-0.5">
-                            <Eye className="h-3 w-3" />详情
-                          </button>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button onClick={() => openDetail(o)} className="text-wine hover:underline text-xs inline-flex items-center gap-0.5">
+                              <Eye className="h-3 w-3" />详情
+                            </button>
+                            {canDelete && !o.isDeleted && (
+                              <button onClick={() => handleDelete(o)} className="text-red-700 hover:underline text-xs inline-flex items-center gap-0.5">
+                                <Trash2 className="h-3 w-3" />删除
+                              </button>
+                            )}
+                            {isAdmin && o.isDeleted && (
+                              <button onClick={() => handleRestore(o)} className="text-wine hover:underline text-xs inline-flex items-center gap-0.5">
+                                <RotateCcw className="h-3 w-3" />恢复
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -576,10 +687,30 @@ export function OrdersPage({ user }: { user: SessionUser }) {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label>系统计算金额</Label>
-              <Input value={formatCurrency(calculatedPreview)} readOnly className="bg-paper" />
+              <Label>产品金额</Label>
+              <Input value={formatCurrency(productAmountPreview)} readOnly className="bg-paper" />
             </div>
             <div>
+              <Label>运费</Label>
+              <Input
+                type="number" step={0.01} min={0}
+                value={createForm.shippingFee}
+                onChange={(e) => setCreateForm({ ...createForm, shippingFee: parseFloat(e.target.value) || 0 })}
+              />
+            </div>
+            <div>
+              <Label>其它费用</Label>
+              <Input
+                type="number" step={0.01} min={0}
+                value={createForm.otherFee}
+                onChange={(e) => setCreateForm({ ...createForm, otherFee: parseFloat(e.target.value) || 0 })}
+              />
+            </div>
+            <div>
+              <Label>系统计算总金额</Label>
+              <Input value={formatCurrency(calculatedPreview)} readOnly className="bg-paper" />
+            </div>
+            <div className="col-span-2">
               <Label>订单总金额</Label>
               <Input
                 type="number" step={0.01} min={0}
@@ -617,8 +748,17 @@ export function OrdersPage({ user }: { user: SessionUser }) {
             <div className="grid grid-cols-2 gap-2 text-sm">
               <div><span className="text-muted">客户：</span>{selected.customerName}</div>
               <div><span className="text-muted">销售：</span>{selected.sales.name}</div>
-              <div><span className="text-muted">系统金额：</span>{formatCurrency(selected.calculatedAmount)}</div>
-              <div><span className="text-muted">产品成本：</span>{formatCurrency(selected.productCostTotal)}</div>
+              <div><span className="text-muted">产品金额：</span>{formatCurrency(selected.productAmount ?? 0)}</div>
+              <div><span className="text-muted">运费：</span>{formatCurrency(selected.shippingFee ?? 0)}</div>
+              <div><span className="text-muted">其它费用：</span>{formatCurrency(selected.otherFee ?? 0)}</div>
+              <div><span className="text-muted">系统总金额：</span>{formatCurrency(selected.calculatedAmount)}</div>
+              <div><span className="text-muted">订单总金额：</span>{formatCurrency(selected.totalAmount)}</div>
+              {selected.amountAdjustReason && (
+                <div className="col-span-2"><span className="text-muted">调整理由：</span>{selected.amountAdjustReason}</div>
+              )}
+              {isAdmin && selected.productCostTotal !== undefined && (
+                <div><span className="text-muted">产品成本：</span>{formatCurrency(selected.productCostTotal)}</div>
+              )}
               {isAdmin && selected.profit !== undefined && (
                 <>
                   <div><span className="text-muted">毛利：</span><span className="text-wine font-medium">{formatCurrency(selected.profit)}</span></div>
@@ -627,7 +767,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
               )}
             </div>
 
-            {canManageOps && (
+            {canManageOps && !selected.isDeleted && (
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Label>修改总金额</Label>
@@ -642,15 +782,44 @@ export function OrdersPage({ user }: { user: SessionUser }) {
               </div>
             )}
 
-            {canManageOps && (
+            {canManageOps && !selected.isDeleted && (
               <>
                 <h4 className="font-serif font-medium">收款</h4>
                 <div className="grid grid-cols-2 gap-2">
-                  <Select value={paymentForm.isPaid ? "1" : "0"} onChange={(e) => setPaymentForm({ ...paymentForm, isPaid: e.target.value === "1" })}>
-                    <option value="0">未收款</option>
-                    <option value="1">已收款</option>
+                  <Select
+                    value={paymentForm.paymentStatus}
+                    onChange={(e) => {
+                      const status = e.target.value as "UNPAID" | "PARTIAL" | "PAID";
+                      setPaymentForm({
+                        ...paymentForm,
+                        paymentStatus: status,
+                        paidAmount:
+                          status === "PAID"
+                            ? editTotalAmount
+                            : status === "UNPAID"
+                              ? 0
+                              : paymentForm.paidAmount,
+                      });
+                    }}
+                  >
+                    <option value="UNPAID">未收款</option>
+                    <option value="PARTIAL">部分付款</option>
+                    <option value="PAID">已收款</option>
                   </Select>
-                  <Input type="number" value={paymentForm.paidAmount} onChange={(e) => setPaymentForm({ ...paymentForm, paidAmount: parseFloat(e.target.value) || 0 })} />
+                  <Input
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    value={paymentForm.paidAmount}
+                    disabled={paymentForm.paymentStatus !== "PARTIAL"}
+                    onChange={(e) =>
+                      setPaymentForm({
+                        ...paymentForm,
+                        paidAmount: parseFloat(e.target.value) || 0,
+                      })
+                    }
+                    placeholder="部分付款金额"
+                  />
                   <Input type="datetime-local" className="col-span-2" value={paymentForm.paidAt} onChange={(e) => setPaymentForm({ ...paymentForm, paidAt: e.target.value })} />
                 </div>
                 <h4 className="font-serif font-medium">发货</h4>
@@ -691,7 +860,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
         )}
         <ModalFooter>
           <Button variant="secondary" onClick={() => setDetailOpen(false)}>关闭</Button>
-          {canManageOps && (
+          {canManageOps && !selected?.isDeleted && (
             <Button onClick={handleUpdateOps} disabled={saving}>{saving ? "保存中..." : "保存"}</Button>
           )}
         </ModalFooter>

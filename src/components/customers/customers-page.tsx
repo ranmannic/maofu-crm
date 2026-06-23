@@ -16,6 +16,7 @@ import type { SessionUser } from "@/lib/auth-types";
 interface Channel {
   id: string;
   name: string;
+  parent?: { id: string; name: string } | null;
 }
 
 interface Customer {
@@ -110,7 +111,7 @@ export function CustomersPage({ user }: { user: SessionUser }) {
   }
 
   useEffect(() => {
-    fetch("/api/channels").then(async (r) => {
+    fetch("/api/channels?leafOnly=true").then(async (r) => {
       if (r.ok) setChannels(await r.json());
     });
     if (isAdmin) {
@@ -165,9 +166,14 @@ export function CustomersPage({ user }: { user: SessionUser }) {
   }
 
   async function handleDelete(c: Customer) {
-    if (!confirm(`确定删除客户「${c.name}」？`)) return;
+    if (!confirm(`确定删除客户「${c.name}」？删除后其历史订单数据将保留。`)) return;
     const res = await fetch(`/api/customers/${c.id}`, { method: "DELETE" });
-    if (res.ok) await load();
+    const data = await res.json();
+    if (!res.ok) {
+      alert(data.error || "删除失败");
+      return;
+    }
+    await load();
   }
 
   async function handleRestore(c: Customer) {
@@ -355,7 +361,9 @@ export function CustomersPage({ user }: { user: SessionUser }) {
             <Select value={form.channelId} onChange={(e) => setForm({ ...form, channelId: e.target.value })}>
               <option value="">请选择</option>
               {channels.map((ch) => (
-                <option key={ch.id} value={ch.id}>{ch.name}</option>
+                <option key={ch.id} value={ch.id}>
+                  {ch.parent ? `${ch.parent.name} / ${ch.name}` : ch.name}
+                </option>
               ))}
             </Select>
           </div>

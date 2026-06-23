@@ -35,18 +35,20 @@ export function generateOrderNo() {
 
 export function calcOrderProfit(
   totalAmount: number,
-  productCostTotal: number
+  productCostTotal: number,
+  shippingFee = 0,
+  otherFee = 0
 ) {
-  return totalAmount - productCostTotal;
+  const performanceAmount = Math.max(0, totalAmount - shippingFee - otherFee);
+  return performanceAmount - productCostTotal;
 }
 
-/** @deprecated use calcOrderProfit(totalAmount, productCostTotal) */
-export function calcOrderProfitFromItems(
-  items: { quantity: number; unitPrice: number; unitCost: number }[]
+export function calcPerformanceAmount(
+  totalAmount: number,
+  shippingFee: number,
+  otherFee: number
 ) {
-  const revenue = items.reduce((s, i) => s + i.quantity * i.unitPrice, 0);
-  const cost = items.reduce((s, i) => s + i.quantity * i.unitCost, 0);
-  return revenue - cost;
+  return Math.max(0, totalAmount - shippingFee - otherFee);
 }
 
 export type Period = "day" | "month" | "year" | "custom";

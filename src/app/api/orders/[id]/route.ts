@@ -7,11 +7,13 @@ import { enrichOrderForList } from "@/lib/serializers";
 import { logOrderChange } from "@/lib/order-audit";
 import {
   calcOrderProfit,
+  calcPerformanceAmount,
   calcProfitMargin,
+  syncPaymentFields,
 } from "@/lib/order-math";
 
 const paymentSchema = z.object({
-  isPaid: z.boolean(),
+  paymentStatus: z.enum(["UNPAID", "PARTIAL", "PAID"]),
   paidAmount: z.number().min(0),
   paidAt: z.string().optional(),
 });
@@ -30,6 +32,7 @@ const updateSchema = z.object({
   handlerId: z.string().nullable().optional(),
   totalAmount: z.number().min(0).optional(),
   amountAdjustReason: z.string().optional(),
+  restore: z.boolean().optional(),
   payment: paymentSchema.optional(),
   shipping: shippingSchema.optional(),
 });
@@ -58,13 +61,30 @@ export async function GET(
     if (session.role === "SALES" && order.salesId !== session.id) {
       return apiError("无权限", 403);
     }
+    if (order.deletedAt && session.role === "SALES") {
+      return apiError("订单已删除", 404);
+    }
 
     const isAdmin = session.role === "ADMIN";
-    const profit = calcOrderProfit(order.totalAmount, order.productCostTotal);
+    const shippingFee = order.shippingFee ?? 0;
+    const otherFee = order.otherFee ?? 0;
+    const performanceAmount = calcPerformanceAmount(
+      order.totalAmount,
+      shippingFee,
+      otherFee
+    );
+    const profit = calcOrderProfit(
+      order.totalAmount,
+      order.productCostTotal,
+      shippingFee,
+      otherFee
+    );
     return NextResponse.json({
       ...enrichOrderForList(order, isAdmin),
       profit: isAdmin ? profit : undefined,
-      profitMargin: isAdmin ? calcProfitMargin(order.totalAmount, profit) : undefined,
+      profitMargin: isAdmin
+        ? calcProfitMargin(performanceAmount, profit)
+        : undefined,
       auditLogs: order.auditLogs,
     });
   } catch (error) {
@@ -91,6 +111,16 @@ export async function PATCH(
       return apiError("无权限", 403);
     }
 
+    if (existing.deletedAt && !body.restore) {
+      return apiError("订单已删除，无法修改", 400);
+    }
+
+    if (body.restore) {
+      if (session.role !== "ADMIN") {
+        return apiError("只有管理员可恢复订单", 403);
+      }
+    }
+
     if (body.payment && !["OPERATIONS", "ADMIN"].includes(session.role)) {
       return apiError("只有职能或管理员可设置收款", 403);
     }
@@ -103,6 +133,11 @@ export async function PATCH(
 
     const orderData: Record<string, unknown> = {};
     const changes: Record<string, unknown> = {};
+
+    if (body.restore) {
+      orderData.deletedAt = null;
+      changes.restore = true;
+    }
 
     if (body.notes !== undefined && body.notes !== existing.notes) {
       orderData.notes = body.notes;
@@ -127,14 +162,26 @@ export async function PATCH(
     }
 
     if (body.payment) {
-      orderData.isPaid = body.payment.isPaid;
-      orderData.paidAmount = body.payment.paidAmount;
+      const total = (body.totalAmount ?? existing.totalAmount) as number;
+      const synced = syncPaymentFields(
+        body.payment.paymentStatus,
+        body.payment.paidAmount,
+        total
+      );
+      orderData.paymentStatus = synced.paymentStatus;
+      orderData.paidAmount = synced.paidAmount;
+      orderData.isPaid = synced.isPaid;
       orderData.paidAt = body.payment.paidAt
         ? new Date(body.payment.paidAt)
-        : body.payment.isPaid
-          ? new Date()
-          : null;
-      changes.payment = body.payment;
+        : synced.paidAt;
+      if (synced.paymentStatus === "UNPAID") {
+        orderData.paidAt = null;
+      }
+      changes.payment = {
+        paymentStatus: synced.paymentStatus,
+        paidAmount: synced.paidAmount,
+        isPaid: synced.isPaid,
+      };
     }
 
     if (body.shipping) {
@@ -198,15 +245,27 @@ export async function PATCH(
     const isAdmin = session.role === "ADMIN";
     const profit =
       order && isAdmin
-        ? calcOrderProfit(order.totalAmount, order.productCostTotal)
+        ? calcOrderProfit(
+            order.totalAmount,
+            order.productCostTotal,
+            order.shippingFee ?? 0,
+            order.otherFee ?? 0
+          )
         : undefined;
+    const performanceAmount =
+      order &&
+      calcPerformanceAmount(
+        order.totalAmount,
+        order.shippingFee ?? 0,
+        order.otherFee ?? 0
+      );
 
     return NextResponse.json({
       ...(order ? enrichOrderForList(order, isAdmin) : {}),
       profit,
       profitMargin:
-        order && isAdmin && profit !== undefined
-          ? calcProfitMargin(order.totalAmount, profit)
+        order && isAdmin && profit !== undefined && performanceAmount
+          ? calcProfitMargin(performanceAmount, profit)
           : undefined,
       auditLogs: order?.auditLogs,
     });
@@ -214,6 +273,37 @@ export async function PATCH(
     if (error instanceof z.ZodError) {
       return apiError(error.issues[0]?.message || "参数错误");
     }
+    return handleApiError(error);
+  }
+}
+
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const session = await requireSession(["SALES", "ADMIN"]);
+    const { id } = await params;
+
+    const existing = await prisma.order.findUnique({ where: { id } });
+    if (!existing) return apiError("订单不存在", 404);
+    if (existing.deletedAt) return apiError("订单已删除", 400);
+
+    if (session.role === "SALES" && existing.salesId !== session.id) {
+      return apiError("无权限", 403);
+    }
+
+    await prisma.order.update({
+      where: { id },
+      data: { deletedAt: new Date() },
+    });
+
+    await logOrderChange(id, session.id, session.name, "删除订单", {
+      orderNo: existing.orderNo,
+    });
+
+    return NextResponse.json({ success: true, softDeleted: true });
+  } catch (error) {
     return handleApiError(error);
   }
 }

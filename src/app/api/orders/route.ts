@@ -4,7 +4,9 @@ import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth";
 import {
   calcCalculatedAmount,
+  calcOrderTotalAmount,
   calcProductCostTotal,
+  syncPaymentFields,
 } from "@/lib/order-math";
 import { generateOrderNo } from "@/lib/utils";
 import { apiError, handleApiError } from "@/lib/api";
@@ -22,6 +24,8 @@ const orderItemSchema = z.object({
 const createOrderSchema = z.object({
   customerId: z.string(),
   items: z.array(orderItemSchema).min(1, "至少添加一个产品"),
+  shippingFee: z.number().min(0).optional(),
+  otherFee: z.number().min(0).optional(),
   totalAmount: z.number().min(0).optional(),
   amountAdjustReason: z.string().optional(),
   notes: z.string().optional(),
@@ -42,12 +46,20 @@ export async function GET(request: NextRequest) {
     const paidStart = searchParams.get("paidStart");
     const paidEnd = searchParams.get("paidEnd");
     const isPaid = searchParams.get("isPaid");
+    const paymentStatus = searchParams.get("paymentStatus");
     const isShipped = searchParams.get("isShipped");
+    const showDeleted = searchParams.get("showDeleted") === "true";
 
     const where: Prisma.OrderWhereInput = {};
 
     if (session.role === "SALES") {
       where.salesId = session.id;
+    }
+
+    if (showDeleted) {
+      where.deletedAt = { not: null };
+    } else {
+      where.deletedAt = null;
     }
 
     if (orderNoQ) {
@@ -81,6 +93,9 @@ export async function GET(request: NextRequest) {
 
     if (isPaid === "true") where.isPaid = true;
     if (isPaid === "false") where.isPaid = false;
+    if (paymentStatus === "UNPAID" || paymentStatus === "PARTIAL" || paymentStatus === "PAID") {
+      where.paymentStatus = paymentStatus;
+    }
     if (isShipped === "true") where.isShipped = true;
     if (isShipped === "false") where.isShipped = false;
 
@@ -151,7 +166,14 @@ export async function POST(request: NextRequest) {
       };
     });
 
-    const calculatedAmount = calcCalculatedAmount(orderItems);
+    const productAmount = calcCalculatedAmount(orderItems);
+    const shippingFee = body.shippingFee ?? 0;
+    const otherFee = body.otherFee ?? 0;
+    const calculatedAmount = calcOrderTotalAmount(
+      productAmount,
+      shippingFee,
+      otherFee
+    );
     const productCostTotal = calcProductCostTotal(orderItems);
     const totalAmount = body.totalAmount ?? calculatedAmount;
 
@@ -168,6 +190,9 @@ export async function POST(request: NextRequest) {
         customerName: customer.name,
         salesId: customer.salesId,
         handlerId: body.handlerId,
+        productAmount,
+        shippingFee,
+        otherFee,
         calculatedAmount,
         totalAmount,
         amountAdjustReason:

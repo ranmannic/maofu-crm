@@ -15,3 +15,6 @@ export const SPEC_UNIT_OPTIONS: { value: SpecUnit; label: string }[] = [
 ];
 
 export const DEFAULT_PAGE_SIZE = 30;
+
+/** sessionStorage：管理员首页数据可见性（登录时重置为隐藏） */
+export const ADMIN_DASHBOARD_DATA_VISIBLE_KEY = "maofu_admin_dashboard_data_visible";

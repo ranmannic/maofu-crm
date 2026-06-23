@@ -31,6 +31,8 @@ export async function GET(request: NextRequest) {
       where.deletedAt = null;
     } else if (showDeleted) {
       where.deletedAt = { not: null };
+    } else {
+      where.deletedAt = null;
     }
 
     if (salesId && session.role === "ADMIN") {
@@ -50,7 +52,7 @@ export async function GET(request: NextRequest) {
         where,
         include: {
           sales: { select: { id: true, name: true } },
-          channel: { select: { id: true, name: true } },
+          channel: { select: { id: true, name: true, parent: { select: { id: true, name: true } } } },
           _count: { select: { orders: true } },
         },
         orderBy: { createdAt: "desc" },
@@ -85,7 +87,7 @@ export async function POST(request: NextRequest) {
       },
       include: {
         sales: { select: { id: true, name: true } },
-        channel: { select: { id: true, name: true } },
+        channel: { select: { id: true, name: true, parent: { select: { id: true, name: true } } } },
       },
     });
 

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Wine } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
+import { ADMIN_DASHBOARD_DATA_VISIBLE_KEY } from "@/lib/constants";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -29,6 +30,7 @@ export default function LoginPage() {
         setError(data.error || "登录失败");
         return;
       }
+      sessionStorage.removeItem(ADMIN_DASHBOARD_DATA_VISIBLE_KEY);
       router.push("/");
       router.refresh();
     } catch {
