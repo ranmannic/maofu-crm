@@ -10,6 +10,7 @@ export type ReconcileItemInput = {
 type OrderItemRow = {
   id: string;
   unitPrice: number;
+  isGift?: boolean;
 };
 
 /** 从核销记录 detail JSON 解析核销明细 */
@@ -42,7 +43,7 @@ export function calcReconcilePerformanceAmount(
   return reconcileItems.reduce((sum, r) => {
     if (r.quantity <= 0) return sum;
     const item = itemMap.get(r.orderItemId);
-    if (!item) return sum;
+    if (!item || item.isGift) return sum;
     return sum + item.unitPrice * r.quantity;
   }, 0);
 }
@@ -68,11 +69,13 @@ export function calcRefundPerformanceAmount(order: {
   refundAmount: number;
 }): number {
   if (order.refundAmount <= 0) return 0;
-  const maxProduct = calcPerformanceAmount(
-    order.totalAmount,
-    order.shippingFee ?? 0,
-    order.otherFee ?? 0
-  );
+  const maxProduct = order.productAmount > 0
+    ? order.productAmount
+    : calcPerformanceAmount(
+        order.totalAmount,
+        order.shippingFee ?? 0,
+        order.otherFee ?? 0
+      );
   if (order.totalAmount <= 0) return 0;
   const ratio = Math.min(1, order.refundAmount / order.totalAmount);
   return Math.min(maxProduct, maxProduct * ratio);
@@ -219,6 +222,7 @@ async function syncLegacyOrderPerformanceRecords(salesId?: string) {
       totalAmount: true,
       shippingFee: true,
       otherFee: true,
+      productAmount: true,
       paidAmount: true,
       paidAt: true,
       orderedAt: true,
@@ -235,7 +239,7 @@ async function syncLegacyOrderPerformanceRecords(salesId?: string) {
       order.totalAmount > 0
         ? Math.min(1, order.paidAmount / order.totalAmount)
         : 0;
-    const amount = maxPerf * ratio;
+    const amount = (order.productAmount > 0 ? order.productAmount : maxPerf) * ratio;
     if (amount <= 0) continue;
     await prisma.performanceRecord.create({
       data: {

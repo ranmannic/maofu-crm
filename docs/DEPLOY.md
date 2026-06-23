@@ -261,7 +261,7 @@ pm2 logs maofu-crm --lines 50
 - [ ] 已执行 `npx prisma migrate deploy`（或 `db push`）+ `npx prisma generate`
 - [ ] 构建成功、PM2 运行正常
 - [ ] 若升级含业绩/退款模块：已执行 `npm run db:sync-performance`
-- [ ] 登录并抽查：客户列表、订单列表、首页统计明细、账期核销页
+- [ ] 登录并抽查：客户列表、订单列表、首页统计明细（业绩总额/未收款/已收款）、账期核销页（待核销 + 已结清）
 
 ### 6.1 两种更新路径
 
@@ -412,6 +412,33 @@ pm2 restart maofu-crm
 3. **不修改**客户、账号、产品、渠道、订单本体数据
 
 首页统计、退款业绩、账期核销「计入业绩」均依赖 `PerformanceRecord`；升级后若首页无数据或报 500，请确认已执行上述命令且 PM2 已重启。
+
+#### 订单赠品 & 账期已结清查询（v0.4+）
+
+新增：
+
+- `OrderItem.isGift`：赠品单价为 0，不计入业绩，成本照常计入
+- Migration：`20260624120000_order_item_gift`
+- 首页业绩总额含未收款业绩，支持明细查询
+- 账期核销页支持「已结清」历史订单查询（`view=settled`）
+- 核销付款：按规格单价自动累加已收金额；未付款时禁止核销
+
+**生产升级步骤（在 migrate deploy 之后）：**
+
+```bash
+npx prisma migrate deploy    # 应用 isGift 字段 migration
+npx prisma generate
+npm run build
+pm2 restart maofu-crm
+npm run db:sync-performance    # 若从旧版升级且首页业绩异常
+```
+
+**验证要点：**
+
+1. 创建订单时可勾选「赠品」，订单金额与业绩不含赠品
+2. 首页「业绩总额」「未收款业绩」可点击查看明细
+3. 账期核销页切换「已结清」，可按客户/订单号查询历史结清记录
+4. 核销付款弹窗显示规格单价，填写核销数量后已收金额自动更新
 
 #### 仅清空订单（保留主数据）
 
@@ -600,6 +627,14 @@ chmod 600 /var/lib/maofu-crm/prod.db
 ### Q8：未核销瓶数统计不准
 
 在「产品管理 → 编辑规格」中设置**折合瓶数**（如整箱 6 瓶填 `6`）。
+
+### Q9：账期核销「已结清」无记录
+
+仅 `creditStatus = SETTLED` 的订单会出现在已结清视图。若订单已全额收款但状态未更新，请在账期页对待核销订单完成核销付款结清，或检查 PM2 日志。
+
+### Q10：开发环境 schema 变更后 API 500
+
+本地 `npm run dev` 若报 `Unknown field`，重启开发服务器并执行 `npx prisma generate`。生产环境务必 `migrate deploy` + `generate` + `pm2 restart`。
 
 ---
 

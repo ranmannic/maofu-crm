@@ -3,36 +3,64 @@ import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth";
 import { handleApiError } from "@/lib/api";
 import { getCreditStats, syncEligibleCreditOrders } from "@/lib/credit";
-import { syncPerformanceData, resolveReconciliationPerformanceAmount, parseReconcileItemsFromDetail } from "@/lib/performance";
+import {
+  syncPerformanceData,
+  resolveReconciliationPerformanceAmount,
+  parseReconcileItemsFromDetail,
+} from "@/lib/performance";
 import { toBottleCount, resolveBottlesPerUnit } from "@/lib/unit-convert";
 import { SPEC_UNIT_LABELS } from "@/lib/constants";
-import type { SpecUnit } from "@/generated/prisma/client";
+import type { Prisma, SpecUnit } from "@/generated/prisma/client";
+
+type CreditView = "active" | "settled";
+
+type OrderWithRelations = Prisma.OrderGetPayload<{
+  include: {
+    customer: { select: { id: true; name: true; sales: { select: { id: true; name: true } } } };
+    items: true;
+    creditLines: true;
+    reconciliationRecords: true;
+  };
+}>;
 
 export async function GET(request: NextRequest) {
   try {
     const session = await requireSession(["ADMIN", "SALES", "OPERATIONS"]);
     const { searchParams } = new URL(request.url);
     const customerQ = searchParams.get("customer")?.trim();
+    const orderNoQ = searchParams.get("orderNo")?.trim();
+    const view = (searchParams.get("view") || "active") as CreditView;
 
     const salesScope =
       session.role === "SALES"
         ? session.id
         : searchParams.get("salesId") || undefined;
 
-    await syncEligibleCreditOrders(salesScope);
-    try {
-      await syncPerformanceData(salesScope);
-    } catch (error) {
-      console.error("[credit] syncPerformanceData", error);
+    if (view === "active") {
+      await syncEligibleCreditOrders(salesScope);
+      try {
+        await syncPerformanceData(salesScope);
+      } catch (error) {
+        console.error("[credit] syncPerformanceData", error);
+      }
     }
 
-    const stats = await getCreditStats(salesScope);
+    const stats = view === "active" ? await getCreditStats(salesScope) : null;
 
-    const orderWhere: Record<string, unknown> = {
+    const orderWhere: Prisma.OrderWhereInput = {
       deletedAt: null,
-      creditStatus: { in: ["ACTIVE", "BAD_DEBT"] },
+      ...(salesScope ? { salesId: salesScope } : {}),
     };
-    if (salesScope) orderWhere.salesId = salesScope;
+
+    if (view === "settled") {
+      orderWhere.creditStatus = "SETTLED";
+    } else {
+      orderWhere.creditStatus = { in: ["ACTIVE", "BAD_DEBT"] };
+    }
+
+    if (orderNoQ) {
+      orderWhere.orderNo = { contains: orderNoQ };
+    }
 
     const [orders, specRows] = await Promise.all([
       prisma.order.findMany({
@@ -51,7 +79,7 @@ export async function GET(request: NextRequest) {
             orderBy: { createdAt: "desc" },
           },
         },
-        orderBy: { orderedAt: "desc" },
+        orderBy: view === "settled" ? { paidAt: "desc" } : { orderedAt: "desc" },
       }),
       prisma.productSpec.findMany({
         select: { id: true, name: true, unitType: true, bottlesPerUnit: true },
@@ -70,13 +98,16 @@ export async function GET(request: NextRequest) {
     }
 
     const customerIds = [...new Set(orders.map((o) => o.customerId))];
-    const inventories = await prisma.customerInventory.findMany({
-      where: {
-        customerId: { in: customerIds },
-        ...(salesScope ? { customer: { salesId: salesScope } } : {}),
-      },
-      orderBy: { productName: "asc" },
-    });
+    const inventories =
+      view === "active" && customerIds.length > 0
+        ? await prisma.customerInventory.findMany({
+            where: {
+              customerId: { in: customerIds },
+              ...(salesScope ? { customer: { salesId: salesScope } } : {}),
+            },
+            orderBy: { productName: "asc" },
+          })
+        : [];
 
     const customerMap = new Map<
       string,
@@ -85,15 +116,19 @@ export async function GET(request: NextRequest) {
         name: string;
         sales: { id: string; name: string };
         inventory: typeof inventories;
-        orders: typeof orders;
+        orders: OrderWithRelations[];
       }
     >();
 
     for (const order of orders) {
       if (customerQ && !order.customerName.includes(customerQ)) continue;
-      if (order.creditStatus === "SETTLED") continue;
-      if (order.paymentStatus === "PAID" && order.creditStatus !== "BAD_DEBT")
-        continue;
+
+      if (view === "active") {
+        if (order.creditStatus === "SETTLED") continue;
+        if (order.paymentStatus === "PAID" && order.creditStatus !== "BAD_DEBT") {
+          continue;
+        }
+      }
 
       const cid = order.customerId;
       if (!customerMap.has(cid)) {
@@ -129,61 +164,19 @@ export async function GET(request: NextRequest) {
             bottlesPerUnit(i.productSpecId, i.specName, i.unitType)
           ),
         })),
-        orders: c.orders.map((o) => ({
-          id: o.id,
-          orderNo: o.orderNo,
-          totalAmount: o.totalAmount,
-          paidAmount: o.paidAmount,
-          unreconciledAmount: Math.max(0, o.totalAmount - o.paidAmount),
-          paymentStatus: o.paymentStatus,
-          creditStatus: o.creditStatus,
-          badDebtAmount: o.badDebtAmount,
-          badDebtGoodsRecovered: o.badDebtGoodsRecovered,
-          badDebtNotes: o.badDebtNotes,
-          orderedAt: o.orderedAt,
-          items: o.items.map((item) => {
-            const line = o.creditLines.find((l) => l.orderItemId === item.id);
-            const perUnit = bottlesPerUnit(
-              item.productSpecId,
-              item.specName,
-              item.unitType
-            );
-            const unreconciledQty = line?.unreconciledQty ?? item.quantity;
-            return {
-              id: item.id,
-              productName: item.productName,
-              specName: item.specName,
-              unitType: item.unitType,
-              unitLabel: SPEC_UNIT_LABELS[item.unitType],
-              quantity: item.quantity,
-              quantityBottles: toBottleCount(item.quantity, perUnit),
-              unreconciledQty,
-              unreconciledBottles: toBottleCount(unreconciledQty, perUnit),
-              badDebtRecoveredQty: line?.badDebtRecoveredQty ?? 0,
-            };
-          }),
-          creditLines: o.creditLines,
-          reconciliationRecords: o.reconciliationRecords.map((rec) => ({
-            id: rec.id,
-            action: rec.action,
-            paidAmount: rec.paidAmount,
-            paymentStatus: rec.paymentStatus,
-            performanceAmount: resolveReconciliationPerformanceAmount(
-              rec,
-              o.items
-            ),
-            paidAt: rec.paidAt,
-            userName: rec.userName,
-            detail: rec.detail,
-            createdAt: rec.createdAt,
-            items: parseReconcileDetail(rec.detail, o.items),
-          })),
-        })),
+        orders: c.orders.map((o) => serializeCreditOrder(o, bottlesPerUnit)),
       };
     });
 
+    const settledOrderCount =
+      view === "settled"
+        ? customers.reduce((sum, c) => sum + c.orders.length, 0)
+        : undefined;
+
     return NextResponse.json({
+      view,
       stats,
+      settledOrderCount,
       customers,
       canEdit: ["OPERATIONS", "ADMIN"].includes(session.role),
     });
@@ -192,9 +185,68 @@ export async function GET(request: NextRequest) {
   }
 }
 
+function serializeCreditOrder(
+  o: OrderWithRelations,
+  bottlesPerUnit: (specId: string, specName: string, unitType: SpecUnit) => number
+) {
+  return {
+    id: o.id,
+    orderNo: o.orderNo,
+    totalAmount: o.totalAmount,
+    paidAmount: o.paidAmount,
+    unreconciledAmount: Math.max(0, o.totalAmount - o.paidAmount),
+    paymentStatus: o.paymentStatus,
+    creditStatus: o.creditStatus,
+    badDebtAmount: o.badDebtAmount,
+    badDebtGoodsRecovered: o.badDebtGoodsRecovered,
+    badDebtNotes: o.badDebtNotes,
+    orderedAt: o.orderedAt,
+    paidAt: o.paidAt,
+    items: o.items.map((item) => {
+      const line = o.creditLines.find((l) => l.orderItemId === item.id);
+      const perUnit = bottlesPerUnit(
+        item.productSpecId,
+        item.specName,
+        item.unitType
+      );
+      const unreconciledQty = line?.unreconciledQty ?? item.quantity;
+      const reconciledQty = line?.reconciledQty ?? 0;
+      return {
+        id: item.id,
+        productName: item.productName,
+        specName: item.specName,
+        unitType: item.unitType,
+        unitLabel: SPEC_UNIT_LABELS[item.unitType],
+        unitPrice: item.unitPrice,
+        quantity: item.quantity,
+        quantityBottles: toBottleCount(item.quantity, perUnit),
+        unreconciledQty,
+        unreconciledBottles: toBottleCount(unreconciledQty, perUnit),
+        reconciledQty,
+        reconciledBottles: toBottleCount(reconciledQty, perUnit),
+        isGift: item.isGift,
+        badDebtRecoveredQty: line?.badDebtRecoveredQty ?? 0,
+      };
+    }),
+    creditLines: o.creditLines,
+    reconciliationRecords: o.reconciliationRecords.map((rec) => ({
+      id: rec.id,
+      action: rec.action,
+      paidAmount: rec.paidAmount,
+      paymentStatus: rec.paymentStatus,
+      performanceAmount: resolveReconciliationPerformanceAmount(rec, o.items),
+      paidAt: rec.paidAt,
+      userName: rec.userName,
+      detail: rec.detail,
+      createdAt: rec.createdAt,
+      items: parseReconcileDetail(rec.detail, o.items),
+    })),
+  };
+}
+
 function parseReconcileDetail(
   detail: string | null,
-  orderItems: { id: string; productName: string; specName: string }[]
+  orderItems: { id: string; productName: string; specName: string; isGift?: boolean }[]
 ) {
   const reconcileItems = parseReconcileItemsFromDetail(detail);
   const itemMap = new Map(orderItems.map((i) => [i.id, i]));
@@ -202,5 +254,6 @@ function parseReconcileDetail(
     productName: itemMap.get(i.orderItemId)?.productName ?? "",
     specName: itemMap.get(i.orderItemId)?.specName ?? "",
     quantity: i.quantity,
+    isGift: itemMap.get(i.orderItemId)?.isGift ?? false,
   }));
 }

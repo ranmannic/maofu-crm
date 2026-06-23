@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Search, AlertTriangle, Wallet } from "lucide-react";
+import { Search, AlertTriangle, Wallet, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -16,10 +16,14 @@ interface CreditItem {
   productName: string;
   specName: string;
   unitLabel: string;
+  unitPrice: number;
   quantity: number;
   quantityBottles: number;
   unreconciledQty: number;
   unreconciledBottles: number;
+  reconciledQty: number;
+  reconciledBottles: number;
+  isGift: boolean;
   badDebtRecoveredQty: number;
 }
 
@@ -32,7 +36,7 @@ interface ReconciliationRecord {
   paidAt: string | null;
   userName: string;
   createdAt: string;
-  items: { productName: string; specName: string; quantity: number }[];
+  items: { productName: string; specName: string; quantity: number; isGift?: boolean }[];
 }
 
 interface CreditOrder {
@@ -47,6 +51,7 @@ interface CreditOrder {
   badDebtGoodsRecovered: boolean | null;
   badDebtNotes: string | null;
   orderedAt: string;
+  paidAt: string | null;
   items: CreditItem[];
   reconciliationRecords?: ReconciliationRecord[];
 }
@@ -77,13 +82,42 @@ interface CreditStats {
   badDebtUnrecoveredQty: number;
 }
 
+function getCreditOrderOverdueLevel(order: CreditOrder): "none" | "month" | "quarter" {
+  if (isCreditOrderFullySettled(order)) return "none";
+  const diffDays =
+    (Date.now() - new Date(order.orderedAt).getTime()) / (1000 * 60 * 60 * 24);
+  if (diffDays > 90) return "quarter";
+  if (diffDays > 30) return "month";
+  return "none";
+}
+
+function getCreditOrderDateClass(order: CreditOrder): string {
+  const level = getCreditOrderOverdueLevel(order);
+  if (level === "quarter") return "text-red-600 font-semibold";
+  if (level === "month") return "text-yellow-600 font-semibold";
+  return "text-muted";
+}
+
+function isCreditOrderFullySettled(order: CreditOrder) {
+  return (
+    order.creditStatus === "SETTLED" ||
+    (order.paymentStatus === "PAID" &&
+      order.items.every((i) => i.unreconciledQty === 0))
+  );
+}
+
 export function CreditPage({ user }: { user: SessionUser }) {
   const canEdit = ["OPERATIONS", "ADMIN"].includes(user.role);
   const [stats, setStats] = useState<CreditStats | null>(null);
   const [customers, setCustomers] = useState<CreditCustomer[]>([]);
   const [loading, setLoading] = useState(true);
+  const [viewMode, setViewMode] = useState<"active" | "settled">("active");
   const [customerQ, setCustomerQ] = useState("");
+  const [orderNoQ, setOrderNoQ] = useState("");
   const [appliedQ, setAppliedQ] = useState("");
+  const [appliedOrderNo, setAppliedOrderNo] = useState("");
+  const [appliedView, setAppliedView] = useState<"active" | "settled">("active");
+  const [settledOrderCount, setSettledOrderCount] = useState(0);
 
   const [payModalOpen, setPayModalOpen] = useState(false);
   const [badDebtModalOpen, setBadDebtModalOpen] = useState(false);
@@ -106,24 +140,66 @@ export function CreditPage({ user }: { user: SessionUser }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const params = new URLSearchParams();
+    const params = new URLSearchParams({ view: appliedView });
     if (appliedQ) params.set("customer", appliedQ);
+    if (appliedOrderNo) params.set("orderNo", appliedOrderNo);
     const res = await fetch(`/api/credit?${params}`);
     if (res.ok) {
       const data = await res.json();
-      setStats(data.stats);
+      setStats(data.stats ?? null);
       setCustomers(data.customers);
+      setSettledOrderCount(data.settledOrderCount ?? 0);
     }
     setLoading(false);
-  }, [appliedQ]);
+  }, [appliedQ, appliedOrderNo, appliedView]);
 
   useEffect(() => {
     load();
   }, [load]);
 
+  function handleSearch() {
+    setAppliedQ(customerQ);
+    setAppliedOrderNo(orderNoQ);
+    setAppliedView(viewMode);
+  }
+
+  function switchView(mode: "active" | "settled") {
+    setViewMode(mode);
+    setAppliedView(mode);
+    if (mode === "active") {
+      setOrderNoQ("");
+      setAppliedOrderNo("");
+    }
+  }
+
+  const isSettledView = appliedView === "settled";
+
   function openReconcileHistory(order: CreditOrder) {
     setSelectedOrder(order);
     setReconcileHistoryOpen(true);
+  }
+
+  function calcReconcilePaidAmount(
+    order: CreditOrder,
+    qtyMap: Record<string, number>
+  ) {
+    const sessionAmount = order.items.reduce((sum, item) => {
+      const qty = qtyMap[item.id] ?? 0;
+      if (qty <= 0 || item.isGift) return sum;
+      return sum + item.unitPrice * qty;
+    }, 0);
+    return order.paidAmount + sessionAmount;
+  }
+
+  function updateReconcileQty(order: CreditOrder, itemId: string, quantity: number) {
+    const nextQty = { ...reconcileQty, [itemId]: quantity };
+    setReconcileQty(nextQty);
+    if (paymentForm.paymentStatus === "PARTIAL") {
+      setPaymentForm((prev) => ({
+        ...prev,
+        paidAmount: calcReconcilePaidAmount(order, nextQty),
+      }));
+    }
   }
 
   function openPayment(order: CreditOrder) {
@@ -170,6 +246,12 @@ export function CreditPage({ user }: { user: SessionUser }) {
     const reconcileItems = Object.entries(reconcileQty)
       .filter(([, q]) => q > 0)
       .map(([orderItemId, quantity]) => ({ orderItemId, quantity }));
+
+    if (paymentForm.paidAmount <= 0 && reconcileItems.length > 0) {
+      setError("未付款时不可核销产品数量");
+      setSaving(false);
+      return;
+    }
 
     const res = await fetch(`/api/credit/${selectedOrder.id}/payment`, {
       method: "POST",
@@ -227,7 +309,7 @@ export function CreditPage({ user }: { user: SessionUser }) {
         </p>
       </div>
 
-      {stats && (
+      {stats && !isSettledView && (
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
           <StatCard title="未核销数量" value={`${stats.totalUnreconciled}瓶`} />
           <StatCard
@@ -249,6 +331,29 @@ export function CreditPage({ user }: { user: SessionUser }) {
 
       <Card>
         <CardContent className="pt-5">
+          <div className="flex flex-wrap gap-2 mb-4">
+            <Button
+              variant={viewMode === "active" ? "primary" : "secondary"}
+              size="sm"
+              onClick={() => switchView("active")}
+            >
+              待核销
+            </Button>
+            <Button
+              variant={viewMode === "settled" ? "primary" : "secondary"}
+              size="sm"
+              onClick={() => switchView("settled")}
+            >
+              <CheckCircle2 className="h-4 w-4 mr-1" />
+              已结清
+            </Button>
+            {isSettledView && (
+              <span className="text-sm text-muted self-center ml-2">
+                共 {settledOrderCount} 笔已结清订单
+              </span>
+            )}
+          </div>
+
           <div className="flex flex-wrap items-end gap-3 mb-4">
             <FilterField label="客户" className="min-w-[160px]">
               <Input
@@ -257,11 +362,16 @@ export function CreditPage({ user }: { user: SessionUser }) {
                 onChange={(e) => setCustomerQ(e.target.value)}
               />
             </FilterField>
-            <Button
-              onClick={() => {
-                setAppliedQ(customerQ);
-              }}
-            >
+            {viewMode === "settled" && (
+              <FilterField label="订单号" className="min-w-[160px]">
+                <Input
+                  placeholder="订单号"
+                  value={orderNoQ}
+                  onChange={(e) => setOrderNoQ(e.target.value)}
+                />
+              </FilterField>
+            )}
+            <Button onClick={handleSearch}>
               <Search className="h-4 w-4 mr-1" />
               查询
             </Button>
@@ -270,7 +380,9 @@ export function CreditPage({ user }: { user: SessionUser }) {
           {loading ? (
             <div className="text-center py-12 text-muted">加载中...</div>
           ) : customers.length === 0 ? (
-            <div className="text-center py-12 text-muted">暂无账期客户</div>
+            <div className="text-center py-12 text-muted">
+              {isSettledView ? "暂无已结清账期订单" : "暂无账期客户"}
+            </div>
           ) : (
             <div className="space-y-6">
               {customers.map((c) => (
@@ -284,16 +396,18 @@ export function CreditPage({ user }: { user: SessionUser }) {
                       <p className="text-sm text-muted">销售：{c.sales.name}</p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                      {c.unreconciledAmount > 0 && (
+                      {!isSettledView && c.unreconciledAmount > 0 && (
                         <span className="text-sm text-wine font-medium">
                           未核销金额 {formatCurrency(c.unreconciledAmount)}
                         </span>
                       )}
-                      <Badge variant="wine">账期客户</Badge>
+                      <Badge variant={isSettledView ? "success" : "wine"}>
+                        {isSettledView ? "已结清客户" : "账期客户"}
+                      </Badge>
                     </div>
                   </div>
 
-                  {c.inventory.length > 0 && (
+                  {!isSettledView && c.inventory.length > 0 && (
                     <div className="mb-4">
                       <h4 className="text-sm font-medium mb-2 font-serif">
                         客户库存
@@ -322,50 +436,93 @@ export function CreditPage({ user }: { user: SessionUser }) {
                   )}
 
                   <div className="space-y-3">
-                    <h4 className="text-sm font-medium font-serif">账期订单</h4>
+                    <h4 className="text-sm font-medium font-serif">
+                      {isSettledView ? "已结清订单" : "账期订单"}
+                    </h4>
                     {c.orders.map((o) => (
                       <Card key={o.id}>
                         <CardHeader className="pb-2">
                           <div className="flex flex-wrap items-center justify-between gap-2">
-                            <CardTitle className="text-base font-mono">
-                              {o.orderNo}
-                              {o.creditStatus === "BAD_DEBT" && (
-                                <Badge variant="danger" className="ml-2">
-                                  坏账
-                                </Badge>
-                              )}
-                              {o.paymentStatus === "PARTIAL" &&
-                                o.creditStatus !== "BAD_DEBT" && (
-                                  <Badge variant="wine" className="ml-2">
-                                    部分收 {formatCurrency(o.paidAmount)}
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span
+                                className={`text-xs shrink-0 ${
+                                  isSettledView
+                                    ? "text-muted"
+                                    : getCreditOrderDateClass(o)
+                                }`}
+                              >
+                                {formatDate(o.orderedAt)}
+                              </span>
+                              <CardTitle className="text-base font-mono">
+                                {o.orderNo}
+                                {isSettledView && (
+                                  <Badge variant="success" className="ml-2">
+                                    已结清
                                   </Badge>
                                 )}
-                              {o.paymentStatus === "UNPAID" &&
-                                o.creditStatus !== "BAD_DEBT" && (
-                                  <Badge variant="warning" className="ml-2">
-                                    未付款已发货
+                                {!isSettledView && o.creditStatus === "BAD_DEBT" && (
+                                  <Badge variant="danger" className="ml-2">
+                                    坏账
                                   </Badge>
                                 )}
-                            </CardTitle>
-                            <span className="text-xs text-muted">
-                              {formatDate(o.orderedAt)}
-                            </span>
+                                {o.paymentStatus === "PARTIAL" &&
+                                  !isSettledView &&
+                                  o.creditStatus !== "BAD_DEBT" && (
+                                    <Badge variant="wine" className="ml-2">
+                                      部分收 {formatCurrency(o.paidAmount)}
+                                    </Badge>
+                                  )}
+                                {o.paymentStatus === "UNPAID" &&
+                                  !isSettledView &&
+                                  o.creditStatus !== "BAD_DEBT" && (
+                                    <Badge variant="warning" className="ml-2">
+                                      未付款已发货
+                                    </Badge>
+                                  )}
+                                {!isSettledView &&
+                                  !isCreditOrderFullySettled(o) &&
+                                  o.creditStatus !== "BAD_DEBT" &&
+                                  getCreditOrderOverdueLevel(o) !== "none" && (
+                                    <Badge variant="default" className="ml-2">
+                                      {getCreditOrderOverdueLevel(o) === "quarter"
+                                        ? "超3月未结清"
+                                        : "超1月未结清"}
+                                    </Badge>
+                                  )}
+                              </CardTitle>
+                            </div>
                           </div>
                         </CardHeader>
                         <CardContent className="space-y-3">
                           <div className="text-sm">
                             总额 {formatCurrency(o.totalAmount)} · 已收{" "}
-                            {formatCurrency(o.paidAmount)} · 未核销金额{" "}
-                            <span className="text-wine font-medium">
-                              {formatCurrency(o.unreconciledAmount)}
-                            </span>
+                            {formatCurrency(o.paidAmount)}
+                            {isSettledView && o.paidAt && (
+                              <>
+                                {" "}
+                                · 结清时间{" "}
+                                <span className="text-green-700 font-medium">
+                                  {formatDate(o.paidAt)}
+                                </span>
+                              </>
+                            )}
+                            {!isSettledView && (
+                              <>
+                                {" "}
+                                · 未核销金额{" "}
+                                <span className="text-wine font-medium">
+                                  {formatCurrency(o.unreconciledAmount)}
+                                </span>
+                              </>
+                            )}
                           </div>
                           <table className="w-full text-xs ink-table">
                             <thead>
                               <tr className="border-b border-border text-muted">
                                 <th className="pb-1">产品</th>
-                                <th className="pb-1">订单量</th>
-                                <th className="pb-1">未核销（瓶）</th>
+                                <th className="pb-1 text-center">订单量</th>
+                                <th className="pb-1 text-center">已核销（瓶）</th>
+                                <th className="pb-1 text-center">未核销（瓶）</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -373,18 +530,26 @@ export function CreditPage({ user }: { user: SessionUser }) {
                                 <tr key={item.id} className="border-b border-border/30">
                                   <td className="py-1">
                                     {item.productName} · {item.specName}
+                                    {item.isGift && (
+                                      <Badge variant="wine" className="ml-1 text-[10px] px-1 py-0">
+                                        赠品
+                                      </Badge>
+                                    )}
                                   </td>
-                                  <td className="py-1">
+                                  <td className="py-1 text-center">
                                     {item.quantityBottles}瓶
                                   </td>
-                                  <td className="py-1 text-wine">
+                                  <td className="py-1 text-center text-green-700">
+                                    {item.reconciledBottles}瓶
+                                  </td>
+                                  <td className="py-1 text-center text-wine">
                                     {item.unreconciledBottles}瓶
                                   </td>
                                 </tr>
                               ))}
                             </tbody>
                           </table>
-                          {o.creditStatus === "BAD_DEBT" && (
+                          {!isSettledView && o.creditStatus === "BAD_DEBT" && (
                             <div className="text-xs text-muted bg-red-50 p-2 rounded-sm">
                               坏账金额：{formatCurrency(o.badDebtAmount ?? 0)} ·
                               货物{o.badDebtGoodsRecovered ? "已" : "未"}收回
@@ -401,7 +566,7 @@ export function CreditPage({ user }: { user: SessionUser }) {
                                 查看核销记录
                               </Button>
                             )}
-                            {canEdit && o.creditStatus !== "BAD_DEBT" && (
+                            {canEdit && !isSettledView && o.creditStatus !== "BAD_DEBT" && (
                               <>
                                 <Button size="sm" onClick={() => openPayment(o)}>
                                   <Wallet className="h-3 w-3 mr-1" />
@@ -444,15 +609,21 @@ export function CreditPage({ user }: { user: SessionUser }) {
                   value={paymentForm.paymentStatus}
                   onChange={(e) => {
                     const status = e.target.value as "UNPAID" | "PARTIAL" | "PAID";
+                    if (status === "PAID") {
+                      setPaymentForm({
+                        ...paymentForm,
+                        paymentStatus: status,
+                        paidAmount: selectedOrder.totalAmount,
+                      });
+                      return;
+                    }
                     setPaymentForm({
                       ...paymentForm,
                       paymentStatus: status,
                       paidAmount:
-                        status === "PAID"
-                          ? selectedOrder.totalAmount
-                          : status === "UNPAID"
-                            ? 0
-                            : paymentForm.paidAmount,
+                        status === "UNPAID"
+                          ? 0
+                          : calcReconcilePaidAmount(selectedOrder, reconcileQty),
                     });
                   }}
                 >
@@ -475,6 +646,12 @@ export function CreditPage({ user }: { user: SessionUser }) {
                     })
                   }
                 />
+                {paymentForm.paymentStatus === "PARTIAL" && (
+                  <p className="text-xs text-muted mt-1">
+                    根据本次核销数量自动累加（含历史已收{" "}
+                    {formatCurrency(selectedOrder.paidAmount)}）
+                  </p>
+                )}
               </div>
             </div>
             <div>
@@ -486,21 +663,32 @@ export function CreditPage({ user }: { user: SessionUser }) {
                 {selectedOrder.items.map((item) => (
                   <div key={item.id} className="flex items-center gap-2 text-sm">
                     <span className="flex-1">
-                      {item.productName} · {item.specName}（未核销 {item.unreconciledBottles}
+                      {item.productName} · {item.specName}
+                      <span className="text-muted ml-1">
+                        {item.isGift
+                          ? "¥0"
+                          : `${formatCurrency(item.unitPrice)}/${item.unitLabel}`}
+                      </span>
+                      {item.isGift && (
+                        <Badge variant="wine" className="ml-1 text-[10px] px-1 py-0">
+                          赠品
+                        </Badge>
+                      )}
+                      （未核销 {item.unreconciledBottles}
                       瓶 / {item.unreconciledQty}{item.unitLabel}）
                     </span>
                     <QtyInput
                       min={0}
                       max={item.unreconciledQty}
                       className="w-24"
+                      disabled={item.unreconciledQty <= 0}
                       value={reconcileQty[item.id] ?? 0}
                       onChange={(n) =>
-                        setReconcileQty({
-                          ...reconcileQty,
-                          [item.id]: n,
-                        })
+                        selectedOrder &&
+                        updateReconcileQty(selectedOrder, item.id, n)
                       }
                     />
+                    <span className="text-xs text-muted w-8">{item.unitLabel}</span>
                   </div>
                 ))}
               </div>
@@ -665,6 +853,7 @@ export function CreditPage({ user }: { user: SessionUser }) {
                           <tr key={idx} className="border-b border-border/20">
                             <td className="py-1">
                               {item.productName} · {item.specName}
+                              {item.isGift && "（赠品）"}
                             </td>
                             <td className="py-1 text-right">{item.quantity}</td>
                           </tr>

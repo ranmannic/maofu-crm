@@ -78,13 +78,14 @@ export function formatItemsSummary(
     productName: string;
     quantity: number;
     unitType: string;
+    isGift?: boolean;
   }[],
   unitLabels: Record<string, string>
 ) {
   return items
     .map(
       (i) =>
-        `${i.productName}×${i.quantity}${unitLabels[i.unitType] || ""}`
+        `${i.productName}${i.isGift ? "（赠）" : ""}×${i.quantity}${unitLabels[i.unitType] || ""}`
     )
     .join("、");
 }

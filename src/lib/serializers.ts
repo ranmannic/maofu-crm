@@ -10,6 +10,7 @@ import { formatPhoneForRole } from "@/lib/phone";
 
 type OrderWithItems = {
   totalAmount: number;
+  productAmount?: number;
   productCostTotal: number;
   shippingFee?: number;
   otherFee?: number;
@@ -18,6 +19,7 @@ type OrderWithItems = {
     productName: string;
     quantity: number;
     unitType: string;
+    isGift?: boolean;
   }[];
 };
 
@@ -27,11 +29,10 @@ export function enrichOrderForList<T extends OrderWithItems>(
 ) {
   const shippingFee = order.shippingFee ?? 0;
   const otherFee = order.otherFee ?? 0;
-  const performanceAmount = calcPerformanceAmount(
-    order.totalAmount,
-    shippingFee,
-    otherFee
-  );
+  const performanceAmount =
+    (order.productAmount ?? 0) > 0
+      ? order.productAmount!
+      : calcPerformanceAmount(order.totalAmount, shippingFee, otherFee);
   const profit = calcOrderProfit(
     order.totalAmount,
     order.productCostTotal,

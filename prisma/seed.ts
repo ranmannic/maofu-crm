@@ -19,8 +19,8 @@ const CHANNEL_TREE: { category: string; children: string[] }[] = [
     category: "批发业务",
     children: ["烟酒杂货店", "超市便利店", "礼品店", "村商店"],
   },
-  { category: "直销业务", children: ["线上直销", "线下直销", "外部销售"] },
-  { category: "分销业务", children: ["线上分销", "红白事渠道"] },
+  { category: "直销业务", children: ["线上直销", "线下直销"] },
+  { category: "分销业务", children: ["线上分销", "红白事渠道", "外部销售"] },
   { category: "特渠业务", children: ["内部渠道"] },
 ];
 

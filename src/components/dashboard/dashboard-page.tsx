@@ -29,9 +29,11 @@ interface PerformanceOrderRow {
   orderNo: string;
   customerName: string;
   salesName: string;
-  performanceAmount: number;
+  totalPerformance: number;
+  paidPerformance: number;
+  unpaidPerformance: number;
   eventCount: number;
-  lastEventAt: string;
+  lastEventAt: string | null;
 }
 
 interface PerformanceEventRow {
@@ -60,6 +62,8 @@ interface StatsData {
   };
   performanceDetails: {
     orders: PerformanceOrderRow[];
+    paidOrders: PerformanceOrderRow[];
+    unpaidOrders: PerformanceOrderRow[];
     events: PerformanceEventRow[];
     showSales: boolean;
   };
@@ -104,7 +108,7 @@ export function DashboardPage({ user }: { user: SessionUser }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [detailModal, setDetailModal] = useState<
-    null | "orders" | "performance" | "refund"
+    null | "orders" | "performance-total" | "performance-paid" | "performance-unpaid" | "refund"
   >(null);
   const [dataVisible, setDataVisible] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -158,6 +162,8 @@ export function DashboardPage({ user }: { user: SessionUser }) {
     })) ?? [];
 
   const performanceOrders = stats?.performanceDetails?.orders ?? [];
+  const paidPerformanceOrders = stats?.performanceDetails?.paidOrders ?? [];
+  const unpaidPerformanceOrders = stats?.performanceDetails?.unpaidOrders ?? [];
   const performanceEvents = stats?.performanceDetails?.events ?? [];
   const showSalesInDetail = stats?.performanceDetails?.showSales ?? isAdmin;
 
@@ -225,7 +231,7 @@ export function DashboardPage({ user }: { user: SessionUser }) {
         <div className="text-center py-20 text-red-700 font-serif">{loadError}</div>
       ) : stats ? (
         <>
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
             <StatCard
               title="订单数"
               value={hidden ? "****" : String(stats.orderStats.total)}
@@ -239,7 +245,16 @@ export function DashboardPage({ user }: { user: SessionUser }) {
                 hidden ? "****" : formatCurrency(stats.orderStats.totalAmount)
               }
               subtitle="点击查看明细"
-              onClick={hidden ? undefined : () => setDetailModal("performance")}
+              onClick={hidden ? undefined : () => setDetailModal("performance-total")}
+              clickable={!hidden}
+            />
+            <StatCard
+              title="未收款业绩"
+              value={
+                hidden ? "****" : formatCurrency(stats.orderStats.unpaidAmount)
+              }
+              subtitle="点击查看明细"
+              onClick={hidden ? undefined : () => setDetailModal("performance-unpaid")}
               clickable={!hidden}
             />
             <StatCard
@@ -259,7 +274,7 @@ export function DashboardPage({ user }: { user: SessionUser }) {
                 hidden ? "****" : formatCurrency(stats.orderStats.paidAmount)
               }
               subtitle="点击查看明细"
-              onClick={hidden ? undefined : () => setDetailModal("performance")}
+              onClick={hidden ? undefined : () => setDetailModal("performance-paid")}
               clickable={!hidden}
             />
             {isAdmin && stats.orderStats.totalProfit !== undefined && (
@@ -422,14 +437,49 @@ export function DashboardPage({ user }: { user: SessionUser }) {
       </Modal>
 
       <Modal
-        open={detailModal === "performance"}
+        open={detailModal === "performance-total"}
         onClose={() => setDetailModal(null)}
-        title="业绩明细"
+        title="业绩总额明细"
+        className="max-w-3xl"
+      >
+        <PerformanceOrderTable
+          orders={performanceOrders}
+          showSales={showSalesInDetail}
+        />
+        <ModalFooter>
+          <Button variant="secondary" onClick={() => setDetailModal(null)}>
+            关闭
+          </Button>
+        </ModalFooter>
+      </Modal>
+
+      <Modal
+        open={detailModal === "performance-paid"}
+        onClose={() => setDetailModal(null)}
+        title="已收款业绩明细"
         className="max-w-3xl"
       >
         <PerformanceEventTable
           events={performanceEvents}
           showSales={showSalesInDetail}
+        />
+        <ModalFooter>
+          <Button variant="secondary" onClick={() => setDetailModal(null)}>
+            关闭
+          </Button>
+        </ModalFooter>
+      </Modal>
+
+      <Modal
+        open={detailModal === "performance-unpaid"}
+        onClose={() => setDetailModal(null)}
+        title="未收款业绩明细"
+        className="max-w-3xl"
+      >
+        <PerformanceOrderTable
+          orders={unpaidPerformanceOrders}
+          showSales={showSalesInDetail}
+          mode="unpaid"
         />
         <ModalFooter>
           <Button variant="secondary" onClick={() => setDetailModal(null)}>
@@ -494,9 +544,11 @@ export function DashboardPage({ user }: { user: SessionUser }) {
 function PerformanceOrderTable({
   orders,
   showSales,
+  mode = "total",
 }: {
   orders: PerformanceOrderRow[];
   showSales: boolean;
+  mode?: "total" | "unpaid";
 }) {
   return (
     <div className="overflow-x-auto">
@@ -506,7 +558,9 @@ function PerformanceOrderTable({
             <th className="pb-2">订单号</th>
             <th className="pb-2">客户</th>
             {showSales && <th className="pb-2">销售</th>}
-            <th className="pb-2">计入业绩</th>
+            <th className="pb-2">业绩总额</th>
+            <th className="pb-2">已收款业绩</th>
+            <th className="pb-2">未收款业绩</th>
             <th className="pb-2">计入次数</th>
             <th className="pb-2">最近计入时间</th>
           </tr>
@@ -517,15 +571,17 @@ function PerformanceOrderTable({
               <td className="py-2">{o.orderNo}</td>
               <td className="py-2">{o.customerName}</td>
               {showSales && <td className="py-2">{o.salesName}</td>}
-              <td className="py-2 text-wine">{formatCurrency(o.performanceAmount)}</td>
+              <td className="py-2 text-wine">{formatCurrency(o.totalPerformance)}</td>
+              <td className="py-2">{formatCurrency(o.paidPerformance)}</td>
+              <td className="py-2">{formatCurrency(o.unpaidPerformance)}</td>
               <td className="py-2">{o.eventCount}</td>
-              <td className="py-2">{formatDate(o.lastEventAt)}</td>
+              <td className="py-2">{o.lastEventAt ? formatDate(o.lastEventAt) : "-"}</td>
             </tr>
           ))}
           {orders.length === 0 && (
             <tr>
-              <td colSpan={showSales ? 6 : 5} className="py-8 text-center text-muted">
-                统计周期内暂无订单
+              <td colSpan={showSales ? 8 : 7} className="py-8 text-center text-muted">
+                {mode === "unpaid" ? "统计周期内暂无未收款业绩" : "统计周期内暂无订单"}
               </td>
             </tr>
           )}

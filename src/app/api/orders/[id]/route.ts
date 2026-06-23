@@ -187,14 +187,23 @@ export async function PATCH(
 
     if (body.payment) {
       const total = (body.totalAmount ?? existing.totalAmount) as number;
+      const positiveReconcileItems =
+        body.reconcileItems?.filter((i) => i.quantity > 0) ?? [];
+
+      if (
+        positiveReconcileItems.length > 0 &&
+        (body.payment.paymentStatus === "UNPAID" || body.payment.paidAmount <= 0)
+      ) {
+        return apiError("未付款时不可核销产品数量");
+      }
+
       const needsReconcile = requiresPaymentReconciliation(
         existing,
         body.payment.paymentStatus
       );
       if (
         needsReconcile &&
-        (!body.reconcileItems ||
-          body.reconcileItems.filter((i) => i.quantity > 0).length === 0)
+        positiveReconcileItems.length === 0
       ) {
         return apiError(
           body.payment.paymentStatus === "PAID"
@@ -225,7 +234,7 @@ export async function PATCH(
           const synced = await processPaymentWithReconciliation(
             id,
             body.payment,
-            (body.reconcileItems ?? []).filter((i) => i.quantity > 0),
+            positiveReconcileItems,
             session.id,
             session.name
           );

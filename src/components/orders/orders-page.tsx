@@ -54,6 +54,7 @@ interface Order {
     unitType: SpecUnit;
     quantity: number;
     unitPrice: number;
+    isGift?: boolean;
   }[];
   shipping: {
     carrier: string | null;
@@ -153,7 +154,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
     otherFee: 0,
     totalAmount: 0,
     amountAdjustReason: "",
-    items: [{ productSpecId: "", quantity: 1 }],
+    items: [{ productSpecId: "", quantity: 1, isGift: false }],
   });
   const [productAmountPreview, setProductAmountPreview] = useState(0);
   const [calculatedPreview, setCalculatedPreview] = useState(0);
@@ -236,6 +237,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
   function calcFromItems(items: typeof createForm.items) {
     const specs = getAllSpecs();
     return items.reduce((sum, item) => {
+      if (item.isGift) return sum;
       const spec = specs.find((s) => s.id === item.productSpecId);
       return sum + (spec ? spec.price * item.quantity : 0);
     }, 0);
@@ -272,7 +274,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
       customerId: "", handlerId: "", notes: "",
       shippingFee: 0, otherFee: 0,
       totalAmount: 0, amountAdjustReason: "",
-      items: [{ productSpecId: "", quantity: 1 }],
+      items: [{ productSpecId: "", quantity: 1, isGift: false }],
     });
     setCreatePaymentForm({ paymentStatus: "UNPAID", paidAmount: 0, paidAt: "" });
     setCreateReconcileQty({});
@@ -362,6 +364,12 @@ export function OrdersPage({ user }: { user: SessionUser }) {
         .map(([orderItemId, quantity]) => ({ orderItemId, quantity }));
     }
 
+    if (paymentForm.paidAmount <= 0 && Array.isArray(body.reconcileItems) && body.reconcileItems.length > 0) {
+      setPaymentError("未付款时不可核销产品数量");
+      setSaving(false);
+      return;
+    }
+
     const res = await fetch(`/api/orders/${paymentOrder.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -392,6 +400,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
         productId: specs.find((s) => s.id === i.productSpecId)!.productId,
         productSpecId: i.productSpecId,
         quantity: i.quantity,
+        isGift: i.isGift,
       }));
 
     const body: Record<string, unknown> = {
@@ -817,7 +826,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
           <div>
             <Label>订单产品 *</Label>
             {createForm.items.map((item, idx) => (
-              <div key={idx} className="flex gap-2 mt-2 items-center">
+              <div key={idx} className="flex gap-2 mt-2 items-center flex-wrap">
                 <Select
                   value={item.productSpecId}
                   onChange={(e) => {
@@ -825,7 +834,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                     items[idx].productSpecId = e.target.value;
                     setCreateForm({ ...createForm, items });
                   }}
-                  className="flex-1"
+                  className="flex-1 min-w-[140px]"
                 >
                   <option value="">选择规格</option>
                   {specs.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
@@ -841,9 +850,21 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                   className="w-20"
                 />
                 <span className="text-sm text-muted w-8">{getUnitForItem(item.productSpecId)}</span>
+                <label className="flex items-center gap-1 text-sm text-muted whitespace-nowrap">
+                  <input
+                    type="checkbox"
+                    checked={item.isGift}
+                    onChange={(e) => {
+                      const items = [...createForm.items];
+                      items[idx].isGift = e.target.checked;
+                      setCreateForm({ ...createForm, items });
+                    }}
+                  />
+                  赠品
+                </label>
               </div>
             ))}
-            <Button variant="secondary" size="sm" className="mt-2" onClick={() => setCreateForm({ ...createForm, items: [...createForm.items, { productSpecId: "", quantity: 1 }] })}>
+            <Button variant="secondary" size="sm" className="mt-2" onClick={() => setCreateForm({ ...createForm, items: [...createForm.items, { productSpecId: "", quantity: 1, isGift: false }] })}>
               添加产品
             </Button>
           </div>
@@ -953,7 +974,13 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                         return (
                           <div key={item.productSpecId} className="flex items-center gap-2 text-sm">
                             <span className="flex-1">
-                              {spec?.label ?? item.productSpecId}（可核销 {item.quantity}
+                              {spec?.label ?? item.productSpecId}
+                              {item.isGift && (
+                                <Badge variant="wine" className="ml-1 text-[10px] px-1 py-0">
+                                  赠品
+                                </Badge>
+                              )}
+                              （可核销 {item.quantity}
                               {spec ? getUnitForItem(item.productSpecId) : ""}）
                             </span>
                             <QtyInput
@@ -1022,6 +1049,45 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                 <div><span className="text-muted">收款时间：</span>{formatDate(selected.paidAt)}</div>
               )}
             </div>
+
+            {selected.items.length > 0 && (
+              <div>
+                <h4 className="font-serif font-medium mb-2">订单产品</h4>
+                <table className="w-full text-sm ink-table">
+                  <thead>
+                    <tr className="border-b border-border text-left text-muted">
+                      <th className="pb-2">产品</th>
+                      <th className="pb-2">数量</th>
+                      <th className="pb-2">单价</th>
+                      <th className="pb-2">小计</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selected.items.map((item) => (
+                      <tr key={item.id} className="border-b border-border/40">
+                        <td className="py-2">
+                          {item.productName} · {item.specName}
+                          {item.isGift && (
+                            <Badge variant="wine" className="ml-1 text-[10px] px-1 py-0">
+                              赠品
+                            </Badge>
+                          )}
+                        </td>
+                        <td className="py-2">
+                          {item.quantity}{SPEC_UNIT_LABELS[item.unitType]}
+                        </td>
+                        <td className="py-2">
+                          {item.isGift ? "¥0" : formatCurrency(item.unitPrice)}
+                        </td>
+                        <td className="py-2">
+                          {formatCurrency(item.unitPrice * item.quantity)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
             {canManageOps && !selected.isDeleted && (
               <div className="grid grid-cols-2 gap-3">
@@ -1246,13 +1312,20 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                       return (
                         <div key={item.id} className="flex items-center gap-2 text-sm">
                           <span className="flex-1">
-                            {item.productName} · {item.specName}（可核销 {maxQty}
+                            {item.productName} · {item.specName}
+                            {item.isGift && (
+                              <Badge variant="wine" className="ml-1 text-[10px] px-1 py-0">
+                                赠品
+                              </Badge>
+                            )}
+                            （可核销 {maxQty}
                             {SPEC_UNIT_LABELS[item.unitType]}）
                           </span>
                           <QtyInput
                             min={0}
                             max={maxQty}
                             className="w-24"
+                            disabled={maxQty <= 0}
                             value={reconcileQty[item.id] ?? 0}
                             onChange={(n) =>
                               setReconcileQty({
@@ -1261,6 +1334,9 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                               })
                             }
                           />
+                          <span className="text-xs text-muted w-8">
+                            {SPEC_UNIT_LABELS[item.unitType]}
+                          </span>
                         </div>
                       );
                     })}

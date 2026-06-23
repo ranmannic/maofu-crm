@@ -71,6 +71,7 @@ export async function GET(request: NextRequest) {
       allCustomersForCurves,
       topCategories,
       periodOrdersForShip,
+      periodOrdersForStats,
     ] = await Promise.all([
       prisma.performanceRecord.findMany({
         where: perfWhere,
@@ -133,14 +134,32 @@ export async function GET(request: NextRequest) {
         },
         select: { isShipped: true, productCostTotal: true, totalAmount: true, shippingFee: true, otherFee: true },
       }),
+      prisma.order.findMany({
+        where: {
+          deletedAt: null,
+          orderedAt: { gte: start, lte: end },
+          ...(salesScope ? { salesId: salesScope } : {}),
+        },
+        select: {
+          id: true,
+          salesId: true,
+          orderNo: true,
+          customerName: true,
+          productAmount: true,
+          sales: { select: { name: true } },
+          performanceRecords: {
+            where: { type: "COLLECT" },
+            select: { amount: true, eventAt: true },
+          },
+        },
+      }),
     ]);
 
-    const orderIdsInPeriod = new Set(collectRecords.map((r) => r.orderId));
-    const totalOrders = orderIdsInPeriod.size;
-    const totalRevenue = collectRecords.reduce(
-      (s, r) => s + (Number(r.amount) || 0),
-      0
-    );
+    const periodPerf = summarizePeriodPerformance(periodOrdersForStats);
+    const totalOrders = periodOrdersForStats.length;
+    const totalRevenue = periodPerf.total;
+    const paidPerformance = periodPerf.collected;
+    const unpaidPerformance = periodPerf.uncollected;
 
     const refundPerformanceOrders = refundOrders.map((o) => {
       const perfAmount = calcRefundPerformanceAmount({
@@ -266,10 +285,11 @@ export async function GET(request: NextRequest) {
 
     const salesStats = isAdmin
       ? salesUsers.map((sales) => {
-          const salesRecords = collectRecords.filter(
-            (r) => r.salesId === sales.id
+          const salesOrders = periodOrdersForStats.filter(
+            (o) => o.salesId === sales.id
           );
-          const salesOrderIds = new Set(salesRecords.map((r) => r.orderId));
+          const salesPerf = summarizePeriodPerformance(salesOrders);
+          const salesOrderIds = new Set(salesOrders.map((o) => o.id));
           const salesRefund = refundPerformanceOrders.filter(
             (o) =>
               refundOrders.find((ro) => ro.id === o.id)?.salesId === sales.id
@@ -278,14 +298,8 @@ export async function GET(request: NextRequest) {
             salesId: sales.id,
             salesName: sales.name,
             orderCount: salesOrderIds.size,
-            totalAmount: salesRecords.reduce(
-              (s, r) => s + (Number(r.amount) || 0),
-              0
-            ),
-            paidAmount: salesRecords.reduce(
-              (s, r) => s + (Number(r.amount) || 0),
-              0
-            ),
+            totalAmount: salesPerf.total,
+            paidAmount: salesPerf.collected,
             refundAmount: salesRefund.reduce(
               (s, o) => s + o.refundPerformanceAmount,
               0
@@ -327,7 +341,11 @@ export async function GET(request: NextRequest) {
     }
 
     const year = new Date().getFullYear();
-    const performanceDetails = buildPerformanceDetails(collectRecords, isAdmin);
+    const performanceDetails = buildPerformanceDetails(
+      periodOrdersForStats,
+      collectRecords,
+      isAdmin
+    );
     const monthlyCurves = {
       performance: buildMonthlyYoY(
         allCollectForCurves.map((r) => ({
@@ -364,8 +382,8 @@ export async function GET(request: NextRequest) {
       orderStats: {
         total: totalOrders,
         totalAmount: totalRevenue,
-        paidAmount: totalRevenue,
-        unpaidAmount: 0,
+        paidAmount: paidPerformance,
+        unpaidAmount: unpaidPerformance,
         shippedCount: periodOrdersForShip.filter((o) => o.isShipped).length,
         unshippedCount: periodOrdersForShip.filter((o) => !o.isShipped).length,
         totalProfit,
@@ -384,7 +402,38 @@ export async function GET(request: NextRequest) {
   }
 }
 
+function summarizePeriodPerformance(
+  orders: {
+    productAmount: number;
+    performanceRecords: { amount: number }[];
+  }[]
+) {
+  return orders.reduce(
+    (acc, order) => {
+      const maxPerf = Number(order.productAmount) || 0;
+      const collected = order.performanceRecords.reduce(
+        (s, r) => s + (Number(r.amount) || 0),
+        0
+      );
+      const capped = Math.min(collected, maxPerf);
+      acc.total += maxPerf;
+      acc.collected += capped;
+      acc.uncollected += Math.max(0, maxPerf - capped);
+      return acc;
+    },
+    { total: 0, collected: 0, uncollected: 0 }
+  );
+}
+
 function buildPerformanceDetails(
+  periodOrders: {
+    id: string;
+    orderNo: string;
+    customerName: string;
+    sales: { name: string };
+    productAmount: number;
+    performanceRecords: { amount: number; eventAt: Date }[];
+  }[],
   collectRecords: {
     id: string;
     orderId: string;
@@ -398,19 +447,6 @@ function buildPerformanceDetails(
   }[],
   showSales: boolean
 ) {
-  const orderMap = new Map<
-    string,
-    {
-      id: string;
-      orderNo: string;
-      customerName: string;
-      salesName: string;
-      performanceAmount: number;
-      eventCount: number;
-      lastEventAt: Date;
-    }
-  >();
-
   const events = collectRecords
     .map((r) => ({
       id: r.id,
@@ -423,37 +459,46 @@ function buildPerformanceDetails(
     }))
     .sort((a, b) => b.eventAt.getTime() - a.eventAt.getTime());
 
-  for (const r of collectRecords) {
-    const amount = Number(r.amount) || 0;
-    const existing = orderMap.get(r.orderId);
-    if (!existing) {
-      orderMap.set(r.orderId, {
-        id: r.orderId,
-        orderNo: r.order.orderNo,
-        customerName: r.order.customerName,
-        salesName: r.order.sales.name,
-        performanceAmount: amount,
-        eventCount: 1,
-        lastEventAt: r.eventAt,
-      });
-      continue;
-    }
-    existing.performanceAmount += amount;
-    existing.eventCount += 1;
-    if (r.eventAt > existing.lastEventAt) {
-      existing.lastEventAt = r.eventAt;
-    }
-  }
+  const orders = periodOrders
+    .map((order) => {
+      const totalPerformance = Number(order.productAmount) || 0;
+      const paidPerformance = order.performanceRecords.reduce(
+        (sum, record) => sum + (Number(record.amount) || 0),
+        0
+      );
+      const cappedPaidPerformance = Math.min(paidPerformance, totalPerformance);
+      const unpaidPerformance = Math.max(0, totalPerformance - cappedPaidPerformance);
+      const lastEventAt = order.performanceRecords.reduce<Date | null>(
+        (latest, record) =>
+          !latest || record.eventAt > latest ? record.eventAt : latest,
+        null
+      );
 
-  const orders = Array.from(orderMap.values()).sort(
-    (a, b) => b.lastEventAt.getTime() - a.lastEventAt.getTime()
-  );
+      return {
+        id: order.id,
+        orderNo: order.orderNo,
+        customerName: order.customerName,
+        salesName: order.sales.name,
+        totalPerformance,
+        paidPerformance: cappedPaidPerformance,
+        unpaidPerformance,
+        eventCount: order.performanceRecords.length,
+        lastEventAt: lastEventAt?.toISOString() ?? null,
+      };
+    })
+    .sort((a, b) => {
+      const aTime = a.lastEventAt ? new Date(a.lastEventAt).getTime() : 0;
+      const bTime = b.lastEventAt ? new Date(b.lastEventAt).getTime() : 0;
+      return bTime - aTime;
+    });
+
+  const unpaidOrders = orders.filter((order) => order.unpaidPerformance > 0);
+  const paidOrders = orders.filter((order) => order.paidPerformance > 0);
 
   return {
-    orders: orders.map((o) => ({
-      ...o,
-      lastEventAt: o.lastEventAt.toISOString(),
-    })),
+    orders,
+    paidOrders,
+    unpaidOrders,
     events: events.map((e) => ({
       ...e,
       eventAt: e.eventAt.toISOString(),

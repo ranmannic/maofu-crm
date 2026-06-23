@@ -20,6 +20,7 @@ const orderItemSchema = z.object({
   productId: z.string(),
   productSpecId: z.string(),
   quantity: z.number().int().min(1),
+  isGift: z.boolean().optional(),
 });
 
 const createOrderSchema = z.object({
@@ -175,6 +176,7 @@ export async function POST(request: NextRequest) {
 
     const orderItems = body.items.map((item) => {
       const spec = specMap.get(item.productSpecId)!;
+      const isGift = item.isGift ?? false;
       return {
         productId: spec.productId,
         productSpecId: spec.id,
@@ -182,8 +184,9 @@ export async function POST(request: NextRequest) {
         specName: spec.name,
         unitType: spec.unitType,
         quantity: item.quantity,
-        unitPrice: spec.price,
+        unitPrice: isGift ? 0 : spec.price,
         unitCost: spec.cost,
+        isGift,
       };
     });
 

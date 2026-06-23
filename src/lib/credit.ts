@@ -419,6 +419,10 @@ export async function processPaymentWithReconciliation(
     order.totalAmount
   );
 
+  if (reconcileItems.length > 0 && (synced.paymentStatus === "UNPAID" || synced.paidAmount <= 0)) {
+    throw new Error("未付款时不可核销产品数量");
+  }
+
   const needsReconcile = requiresPaymentReconciliation(order, synced.paymentStatus);
 
   if (needsReconcile) {
@@ -455,11 +459,10 @@ export async function processPaymentWithReconciliation(
 
   const shippingFee = order.shippingFee ?? 0;
   const otherFee = order.otherFee ?? 0;
-  const maxProductPerf = calcPerformanceAmount(
-    order.totalAmount,
-    shippingFee,
-    otherFee
-  );
+  const maxProductPerf =
+    order.productAmount > 0
+      ? order.productAmount
+      : calcPerformanceAmount(order.totalAmount, shippingFee, otherFee);
 
   let performanceAmount = 0;
   if (needsReconcile && reconcileItems.length > 0) {
