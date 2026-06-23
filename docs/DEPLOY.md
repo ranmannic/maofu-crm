@@ -244,7 +244,10 @@ npm run build
 # ── 第 6 步：重启服务 ──
 pm2 restart maofu-crm
 
-# ── 第 7 步：验证 ──
+# ── 第 7 步：业绩数据初始化（含 PerformanceRecord 的版本升级后执行）──
+npm run db:sync-performance
+
+# ── 第 8 步：验证 ──
 curl -I http://127.0.0.1:3000/login
 pm2 logs maofu-crm --lines 50
 ```
@@ -255,8 +258,10 @@ pm2 logs maofu-crm --lines 50
 - [ ] 已阅读本次更新的 CHANGELOG / commit 说明
 - [ ] 确认是否涉及 `prisma/schema.prisma` 变更
 - [ ] **未**执行 `db:seed` / `db:reset`
+- [ ] 已执行 `npx prisma migrate deploy`（或 `db push`）+ `npx prisma generate`
 - [ ] 构建成功、PM2 运行正常
-- [ ] 登录并抽查：客户列表、订单列表、新建订单、**账期核销页**
+- [ ] 若升级含业绩/退款模块：已执行 `npm run db:sync-performance`
+- [ ] 登录并抽查：客户列表、订单列表、首页统计明细、账期核销页
 
 ### 6.1 两种更新路径
 
@@ -271,9 +276,49 @@ pm2 logs maofu-crm --lines 50
 npx prisma generate
 npm run build
 pm2 restart maofu-crm
+npm run db:sync-performance   # 回填历史业绩/核销业绩，首页统计依赖此步骤
 ```
 
 > 若 `migrate deploy` 报 migration 冲突，**不要**强行 reset；改用 `db push` 或联系维护人员处理。
+
+### 6.2 版本升级标准流程（含数据结构变更）
+
+适用于本次及后续含 Prisma schema 变更的发布：
+
+```bash
+cd /opt/maofu-crm
+./scripts/backup-db.sh /var/lib/maofu-crm/prod.db /var/backups/maofu-crm
+
+git pull origin main
+npm ci
+
+# 1. 同步表结构（二选一，见 6.1）
+npx prisma migrate deploy
+# 或：npx prisma db push
+
+# 2. 重新生成 Client（必须，否则 API 报 Unknown field）
+npx prisma generate
+
+# 3. 构建并重启
+npm run build
+pm2 restart maofu-crm
+
+# 4. 初始化/回填业务数据（不修改账号、客户、产品、渠道）
+npm run db:sync-performance
+
+# 5. 验证
+curl -I http://127.0.0.1:3000/login
+```
+
+**说明：**
+
+| 命令 | 作用 | 是否覆盖业务主数据 |
+|------|------|-------------------|
+| `db:sync-performance` | 从核销记录/已收款订单回填 `PerformanceRecord`、补全核销业绩字段 | 否，仅补业绩记录 |
+| `db:seed` | 写入演示账号与样例数据 | ⚠️ 会 upsert 演示配置，生产禁用 |
+| `db:clear-orders` | 清空全部订单及账期库存 | 仅保留账号/客户/产品/渠道，生产慎用 |
+
+> **重要**：`schema` 变更后必须 `prisma generate` + **重启 PM2**，否则首页/账期页可能出现 500（Prisma Client 与数据库不一致）。
 
 ---
 
@@ -345,6 +390,41 @@ pm2 restart maofu-crm
 - 已有产品规格 `bottlesPerUnit` 默认为 1；整箱等规格请在「产品管理」中设置折合瓶数
 - 若生产库此前仅用 `db push` 同步、未跑过 migration，见下方 [6.1 节](#61-两种更新路径)
 
+#### 业绩按收款时间 & 退款（v0.3+）
+
+新增：
+
+- `Order`：`refundStatus`、`refundAmount`、`refundedAt`
+- `PerformanceRecord` 表：按收款/核销时间记录业绩（`COLLECT` / `REFUND`）
+- `CreditReconciliationRecord`：`performanceAmount`、`paidAt`
+
+**生产升级步骤（在 migrate deploy 之后）：**
+
+```bash
+npm run db:sync-performance
+pm2 restart maofu-crm
+```
+
+该命令会：
+
+1. 从已有核销记录的 `detail` 回填 `performanceAmount`
+2. 为历史已收款/已核销订单生成 `PerformanceRecord`
+3. **不修改**客户、账号、产品、渠道、订单本体数据
+
+首页统计、退款业绩、账期核销「计入业绩」均依赖 `PerformanceRecord`；升级后若首页无数据或报 500，请确认已执行上述命令且 PM2 已重启。
+
+#### 仅清空订单（保留主数据）
+
+维护场景（如测试环境重置订单、生产清账前已备份）：
+
+```bash
+./scripts/backup-db.sh /var/lib/maofu-crm/prod.db /var/backups/maofu-crm
+npm run db:clear-orders
+```
+
+清空范围：全部订单、订单行、发货、审计、账期行、核销记录、业绩记录、客户账期库存。  
+**保留**：User、Customer、Product、ProductSpec、ChannelType。
+
 #### 重命名 / 删除字段
 
 - **高风险**：可能导致数据丢失
@@ -357,6 +437,8 @@ pm2 restart maofu-crm
 |------|----------|
 | `npm run db:seed` | ❌ 禁止（会 upsert 演示数据，可能覆盖配置） |
 | `npm run db:reset` | ❌ 禁止（清空全部数据） |
+| `npm run db:sync-performance` | ✅ 升级后推荐（回填业绩，不改主数据） |
+| `npm run db:clear-orders` | ⚠️ 仅维护窗口、已备份；清空全部订单 |
 | `npx prisma migrate deploy` | ✅ 推荐 |
 | `npx prisma db push` | ⚠️ 谨慎，仅 additive 小变更且已备份 |
 | `npx prisma generate` | ✅ 安全 |
@@ -473,15 +555,28 @@ curl http://127.0.0.1:3000/login  # 直连 Next.js
 sudo nginx -t && sudo systemctl status nginx
 ```
 
-### Q4：更新后 API 报 `Unknown field` / Prisma 校验错误
+### Q4：更新后 API 报 `Unknown field` / Prisma 校验错误 / 首页 500
 
 通常是 **Prisma Client 未重新生成** 或 **进程未重启**：
 
 ```bash
+npx prisma migrate deploy   # 或 db push
 npx prisma generate
 npm run build
 pm2 restart maofu-crm
+npm run db:sync-performance
 ```
+
+### Q4b：首页无业绩数据 / 核销记录业绩显示 NaN
+
+历史订单未生成 `PerformanceRecord` 或核销业绩未回填：
+
+```bash
+npm run db:sync-performance
+pm2 restart maofu-crm
+```
+
+刷新首页（切换「本月」查看）和账期核销页即可。
 
 ### Q5：管理员删除客户失败
 
@@ -520,7 +615,8 @@ chmod 600 /var/lib/maofu-crm/prod.db
 │   ├── schema.prisma
 │   └── migrations/
 └── scripts/
-    └── backup-db.sh
+    ├── backup-db.sh
+    └── (npm scripts: db:sync-performance, db:clear-orders)
 
 /var/lib/maofu-crm/
 └── prod.db                  # 生产数据库（持久化，不随 git pull 变化）

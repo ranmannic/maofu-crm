@@ -5,12 +5,44 @@ import { Eye, EyeOff } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/input";
+import { Modal, ModalFooter } from "@/components/ui/modal";
 import { YoYCurveChart } from "@/components/dashboard/yoy-chart";
 import { ChannelPieChart } from "@/components/dashboard/channel-pie-chart";
 import { CategoryPerformanceSection } from "@/components/dashboard/category-performance-section";
 import { ADMIN_DASHBOARD_DATA_VISIBLE_KEY } from "@/lib/constants";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, formatDate } from "@/lib/utils";
 import type { SessionUser } from "@/lib/auth-types";
+
+interface RefundOrderRow {
+  id: string;
+  orderNo: string;
+  customerName: string;
+  refundAmount: number;
+  refundPerformanceAmount: number;
+  refundedAt: string | null;
+  refundStatus: string;
+  salesName: string;
+}
+
+interface PerformanceOrderRow {
+  id: string;
+  orderNo: string;
+  customerName: string;
+  salesName: string;
+  performanceAmount: number;
+  eventCount: number;
+  lastEventAt: string;
+}
+
+interface PerformanceEventRow {
+  id: string;
+  orderId: string;
+  orderNo: string;
+  customerName: string;
+  salesName: string;
+  amount: number;
+  eventAt: string;
+}
 
 interface StatsData {
   orderStats: {
@@ -21,6 +53,15 @@ interface StatsData {
     shippedCount: number;
     unshippedCount: number;
     totalProfit?: number;
+  };
+  refundStats: {
+    totalAmount: number;
+    orders: RefundOrderRow[];
+  };
+  performanceDetails: {
+    orders: PerformanceOrderRow[];
+    events: PerformanceEventRow[];
+    showSales: boolean;
   };
   customerStats: {
     total: number;
@@ -61,6 +102,10 @@ export function DashboardPage({ user }: { user: SessionUser }) {
   const [salesId, setSalesId] = useState("");
   const [stats, setStats] = useState<StatsData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [detailModal, setDetailModal] = useState<
+    null | "orders" | "performance" | "refund"
+  >(null);
   const [dataVisible, setDataVisible] = useState(() => {
     if (typeof window === "undefined") return false;
     return sessionStorage.getItem(ADMIN_DASHBOARD_DATA_VISIBLE_KEY) === "true";
@@ -77,10 +122,22 @@ export function DashboardPage({ user }: { user: SessionUser }) {
   useEffect(() => {
     async function load() {
       setLoading(true);
+      setLoadError("");
       const params = new URLSearchParams({ period });
       if (salesId) params.set("salesId", salesId);
-      const res = await fetch(`/api/stats?${params}`);
-      if (res.ok) setStats(await res.json());
+      try {
+        const res = await fetch(`/api/stats?${params}`);
+        if (res.ok) {
+          setStats(await res.json());
+        } else {
+          const data = await res.json().catch(() => ({}));
+          setStats(null);
+          setLoadError(data.error || "数据加载失败，请刷新重试");
+        }
+      } catch {
+        setStats(null);
+        setLoadError("网络异常，无法加载统计数据");
+      }
       setLoading(false);
     }
     load();
@@ -99,6 +156,10 @@ export function DashboardPage({ user }: { user: SessionUser }) {
       name: c.channel,
       value: c.amount,
     })) ?? [];
+
+  const performanceOrders = stats?.performanceDetails?.orders ?? [];
+  const performanceEvents = stats?.performanceDetails?.events ?? [];
+  const showSalesInDetail = stats?.performanceDetails?.showSales ?? isAdmin;
 
   return (
     <div className="space-y-6">
@@ -160,24 +221,46 @@ export function DashboardPage({ user }: { user: SessionUser }) {
 
       {loading ? (
         <div className="text-center py-20 text-muted font-serif">加载中...</div>
+      ) : loadError ? (
+        <div className="text-center py-20 text-red-700 font-serif">{loadError}</div>
       ) : stats ? (
         <>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
             <StatCard
               title="订单数"
               value={hidden ? "****" : String(stats.orderStats.total)}
+              subtitle="点击查看明细"
+              onClick={hidden ? undefined : () => setDetailModal("orders")}
+              clickable={!hidden}
             />
             <StatCard
               title="业绩总额"
               value={
                 hidden ? "****" : formatCurrency(stats.orderStats.totalAmount)
               }
+              subtitle="点击查看明细"
+              onClick={hidden ? undefined : () => setDetailModal("performance")}
+              clickable={!hidden}
             />
             <StatCard
-              title="已收款"
+              title="退款业绩"
+              value={
+                hidden
+                  ? "****"
+                  : formatCurrency(stats.refundStats?.totalAmount ?? 0)
+              }
+              subtitle="点击查看明细"
+              onClick={hidden ? undefined : () => setDetailModal("refund")}
+              clickable={!hidden}
+            />
+            <StatCard
+              title="已收款业绩"
               value={
                 hidden ? "****" : formatCurrency(stats.orderStats.paidAmount)
               }
+              subtitle="点击查看明细"
+              onClick={hidden ? undefined : () => setDetailModal("performance")}
+              clickable={!hidden}
             />
             {isAdmin && stats.orderStats.totalProfit !== undefined && (
               <StatCard
@@ -320,6 +403,176 @@ export function DashboardPage({ user }: { user: SessionUser }) {
           )}
         </>
       ) : null}
+
+      <Modal
+        open={detailModal === "orders"}
+        onClose={() => setDetailModal(null)}
+        title="订单明细"
+        className="max-w-3xl"
+      >
+        <PerformanceOrderTable
+          orders={performanceOrders}
+          showSales={showSalesInDetail}
+        />
+        <ModalFooter>
+          <Button variant="secondary" onClick={() => setDetailModal(null)}>
+            关闭
+          </Button>
+        </ModalFooter>
+      </Modal>
+
+      <Modal
+        open={detailModal === "performance"}
+        onClose={() => setDetailModal(null)}
+        title="业绩明细"
+        className="max-w-3xl"
+      >
+        <PerformanceEventTable
+          events={performanceEvents}
+          showSales={showSalesInDetail}
+        />
+        <ModalFooter>
+          <Button variant="secondary" onClick={() => setDetailModal(null)}>
+            关闭
+          </Button>
+        </ModalFooter>
+      </Modal>
+
+      <Modal
+        open={detailModal === "refund"}
+        onClose={() => setDetailModal(null)}
+        title="退款业绩明细"
+        className="max-w-3xl"
+      >
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm ink-table">
+            <thead>
+              <tr className="border-b border-border text-left text-muted">
+                <th className="pb-2">订单号</th>
+                <th className="pb-2">客户</th>
+                {isAdmin && <th className="pb-2">销售</th>}
+                <th className="pb-2">退款金额</th>
+                <th className="pb-2">扣减业绩</th>
+                <th className="pb-2">退款时间</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(stats?.refundStats?.orders ?? []).map((o) => (
+                <tr key={o.id} className="border-b border-border/40">
+                  <td className="py-2">{o.orderNo}</td>
+                  <td className="py-2">{o.customerName}</td>
+                  {isAdmin && <td className="py-2">{o.salesName}</td>}
+                  <td className="py-2">{formatCurrency(o.refundAmount)}</td>
+                  <td className="py-2 text-wine">
+                    {formatCurrency(o.refundPerformanceAmount)}
+                  </td>
+                  <td className="py-2">
+                    {o.refundedAt ? formatDate(o.refundedAt) : "-"}
+                  </td>
+                </tr>
+              ))}
+              {(stats?.refundStats?.orders.length ?? 0) === 0 && (
+                <tr>
+                  <td colSpan={isAdmin ? 6 : 5} className="py-8 text-center text-muted">
+                    统计周期内暂无退款
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <ModalFooter>
+          <Button variant="secondary" onClick={() => setDetailModal(null)}>
+            关闭
+          </Button>
+        </ModalFooter>
+      </Modal>
+    </div>
+  );
+}
+
+function PerformanceOrderTable({
+  orders,
+  showSales,
+}: {
+  orders: PerformanceOrderRow[];
+  showSales: boolean;
+}) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm ink-table">
+        <thead>
+          <tr className="border-b border-border text-left text-muted">
+            <th className="pb-2">订单号</th>
+            <th className="pb-2">客户</th>
+            {showSales && <th className="pb-2">销售</th>}
+            <th className="pb-2">计入业绩</th>
+            <th className="pb-2">计入次数</th>
+            <th className="pb-2">最近计入时间</th>
+          </tr>
+        </thead>
+        <tbody>
+          {orders.map((o) => (
+            <tr key={o.id} className="border-b border-border/40">
+              <td className="py-2">{o.orderNo}</td>
+              <td className="py-2">{o.customerName}</td>
+              {showSales && <td className="py-2">{o.salesName}</td>}
+              <td className="py-2 text-wine">{formatCurrency(o.performanceAmount)}</td>
+              <td className="py-2">{o.eventCount}</td>
+              <td className="py-2">{formatDate(o.lastEventAt)}</td>
+            </tr>
+          ))}
+          {orders.length === 0 && (
+            <tr>
+              <td colSpan={showSales ? 6 : 5} className="py-8 text-center text-muted">
+                统计周期内暂无订单
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function PerformanceEventTable({
+  events,
+  showSales,
+}: {
+  events: PerformanceEventRow[];
+  showSales: boolean;
+}) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm ink-table">
+        <thead>
+          <tr className="border-b border-border text-left text-muted">
+            <th className="pb-2">订单号</th>
+            <th className="pb-2">客户</th>
+            {showSales && <th className="pb-2">销售</th>}
+            <th className="pb-2">业绩金额</th>
+            <th className="pb-2">计入时间</th>
+          </tr>
+        </thead>
+        <tbody>
+          {events.map((e) => (
+            <tr key={e.id} className="border-b border-border/40">
+              <td className="py-2">{e.orderNo}</td>
+              <td className="py-2">{e.customerName}</td>
+              {showSales && <td className="py-2">{e.salesName}</td>}
+              <td className="py-2 text-wine">{formatCurrency(e.amount)}</td>
+              <td className="py-2">{formatDate(e.eventAt)}</td>
+            </tr>
+          ))}
+          {events.length === 0 && (
+            <tr>
+              <td colSpan={showSales ? 5 : 4} className="py-8 text-center text-muted">
+                统计周期内暂无业绩
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -328,21 +581,44 @@ function StatCard({
   title,
   value,
   highlight,
+  subtitle,
+  onClick,
+  clickable,
 }: {
   title: string;
   value: string;
   highlight?: boolean;
+  subtitle?: string;
+  onClick?: () => void;
+  clickable?: boolean;
 }) {
   return (
-    <Card>
-      <CardContent className="pt-5">
-        <p className="text-sm text-muted font-serif">{title}</p>
-        <p
-          className={`text-2xl font-serif font-bold mt-1 ${highlight ? "text-wine" : ""}`}
-        >
-          {value}
-        </p>
-      </CardContent>
-    </Card>
+    <div
+      className={clickable ? "cursor-pointer" : undefined}
+      onClick={onClick}
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onKeyDown={
+        clickable && onClick
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") onClick();
+            }
+          : undefined
+      }
+    >
+      <Card className={clickable ? "hover:border-wine/40 transition-colors h-full" : undefined}>
+        <CardContent className="pt-5">
+          <p className="text-sm text-muted font-serif">{title}</p>
+          <p
+            className={`text-2xl font-serif font-bold mt-1 ${highlight ? "text-wine" : ""}`}
+          >
+            {value}
+          </p>
+          {subtitle && (
+            <p className="text-xs text-muted mt-1">{subtitle}</p>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }

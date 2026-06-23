@@ -10,6 +10,8 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
+    "db:sync-performance": "tsx prisma/sync-performance.ts",
+    "db:clear-orders": "tsx prisma/clear-orders.ts",
     "db:reset": "prisma migrate reset --force",
     "postinstall": "prisma generate"
   },

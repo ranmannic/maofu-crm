@@ -6,10 +6,12 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export function formatCurrency(amount: number) {
+  const n = Number(amount);
+  const safe = Number.isFinite(n) ? n : 0;
   return new Intl.NumberFormat("zh-CN", {
     style: "currency",
     currency: "CNY",
-  }).format(amount);
+  }).format(safe);
 }
 
 export function formatDate(date: Date | string | null | undefined) {

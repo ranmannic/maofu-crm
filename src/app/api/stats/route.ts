@@ -3,11 +3,14 @@ import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth";
 import {
   calcOrderProfit,
-  calcPerformanceAmount,
   getDateRange,
   type Period,
 } from "@/lib/utils";
 import { handleApiError } from "@/lib/api";
+import {
+  calcRefundPerformanceAmount,
+  syncPerformanceData,
+} from "@/lib/performance";
 
 export async function GET(request: NextRequest) {
   try {
@@ -21,21 +24,35 @@ export async function GET(request: NextRequest) {
     const { start, end } = getDateRange(period, customStart, customEnd);
     const isAdmin = session.role === "ADMIN";
 
-    const orderWhere: Record<string, unknown> = {
-      orderedAt: { gte: start, lte: end },
-      deletedAt: null,
-    };
+    const salesScope =
+      session.role === "SALES"
+        ? session.id
+        : salesIdFilter || undefined;
+
+    try {
+      await syncPerformanceData(salesScope);
+    } catch (error) {
+      console.error("[stats] syncPerformanceData", error);
+    }
+
     const customerWhere: Record<string, unknown> = {
       createdAt: { gte: start, lte: end },
     };
+    if (salesScope) customerWhere.salesId = salesScope;
 
-    if (session.role === "SALES") {
-      orderWhere.salesId = session.id;
-      customerWhere.salesId = session.id;
-    } else if (salesIdFilter) {
-      orderWhere.salesId = salesIdFilter;
-      customerWhere.salesId = salesIdFilter;
-    }
+    const perfWhere: Record<string, unknown> = {
+      type: "COLLECT",
+      eventAt: { gte: start, lte: end },
+      order: { deletedAt: null },
+    };
+    if (salesScope) perfWhere.salesId = salesScope;
+
+    const refundOrderWhere: Record<string, unknown> = {
+      deletedAt: null,
+      refundAmount: { gt: 0 },
+      refundedAt: { gte: start, lte: end },
+    };
+    if (salesScope) refundOrderWhere.salesId = salesScope;
 
     const channelInclude = {
       select: {
@@ -45,73 +62,112 @@ export async function GET(request: NextRequest) {
       },
     };
 
-    const [orders, customers, salesUsers, allOrdersForCurves, allCustomersForCurves, topCategories] =
-      await Promise.all([
-        prisma.order.findMany({
-          where: orderWhere,
-          include: {
-            items: true,
-            customer: { select: { channel: channelInclude } },
-            sales: { select: { id: true, name: true } },
+    const [
+      collectRecords,
+      refundOrders,
+      customers,
+      salesUsers,
+      allCollectForCurves,
+      allCustomersForCurves,
+      topCategories,
+      periodOrdersForShip,
+    ] = await Promise.all([
+      prisma.performanceRecord.findMany({
+        where: perfWhere,
+        include: {
+          order: {
+            include: {
+              customer: { select: { channel: channelInclude } },
+              sales: { select: { id: true, name: true } },
+            },
           },
-        }),
-        prisma.customer.findMany({
-          where: customerWhere,
-          include: { channel: channelInclude },
-        }),
-        isAdmin
-          ? prisma.user.findMany({
-              where: { role: "SALES" },
-              select: { id: true, name: true },
-            })
-          : Promise.resolve([]),
-        prisma.order.findMany({
-          where: buildCurveOrderWhere(session, salesIdFilter),
-          select: {
-            orderedAt: true,
-            totalAmount: true,
-            shippingFee: true,
-            otherFee: true,
-            salesId: true,
-            deletedAt: true,
-          },
-        }),
-        prisma.customer.findMany({
-          where: buildCurveCustomerWhere(session, salesIdFilter),
-          select: {
-            createdAt: true,
-            deletedAt: true,
-            salesId: true,
-          },
-        }),
-        isAdmin
-          ? prisma.channelType.findMany({
-              where: { parentId: null },
-              orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
-              include: {
-                children: { orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] },
-              },
-            })
-          : Promise.resolve([]),
-      ]);
+        },
+      }),
+      prisma.order.findMany({
+        where: refundOrderWhere,
+        include: {
+          sales: { select: { id: true, name: true } },
+        },
+        orderBy: { refundedAt: "desc" },
+      }),
+      prisma.customer.findMany({
+        where: customerWhere,
+        include: { channel: channelInclude },
+      }),
+      isAdmin
+        ? prisma.user.findMany({
+            where: { role: "SALES" },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve([]),
+      prisma.performanceRecord.findMany({
+        where: {
+          type: "COLLECT",
+          ...(salesScope ? { salesId: salesScope } : {}),
+          order: { deletedAt: null },
+        },
+        select: { eventAt: true, amount: true, salesId: true },
+      }),
+      prisma.customer.findMany({
+        where: buildCurveCustomerWhere(session, salesIdFilter),
+        select: {
+          createdAt: true,
+          deletedAt: true,
+          salesId: true,
+        },
+      }),
+      isAdmin
+        ? prisma.channelType.findMany({
+            where: { parentId: null },
+            orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+            include: {
+              children: { orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] },
+            },
+          })
+        : Promise.resolve([]),
+      prisma.order.findMany({
+        where: {
+          deletedAt: null,
+          orderedAt: { gte: start, lte: end },
+          ...(salesScope ? { salesId: salesScope } : {}),
+        },
+        select: { isShipped: true, productCostTotal: true, totalAmount: true, shippingFee: true, otherFee: true },
+      }),
+    ]);
 
-    function getPerformance(o: {
-      totalAmount: number;
-      shippingFee?: number;
-      otherFee?: number;
-    }) {
-      return calcPerformanceAmount(
-        o.totalAmount,
-        o.shippingFee ?? 0,
-        o.otherFee ?? 0
-      );
-    }
+    const orderIdsInPeriod = new Set(collectRecords.map((r) => r.orderId));
+    const totalOrders = orderIdsInPeriod.size;
+    const totalRevenue = collectRecords.reduce(
+      (s, r) => s + (Number(r.amount) || 0),
+      0
+    );
 
-    const totalOrders = orders.length;
-    const totalRevenue = orders.reduce((s, o) => s + getPerformance(o), 0);
-    const totalPaid = orders.reduce((s, o) => s + o.paidAmount, 0);
+    const refundPerformanceOrders = refundOrders.map((o) => {
+      const perfAmount = calcRefundPerformanceAmount({
+        totalAmount: o.totalAmount,
+        productAmount: o.productAmount,
+        shippingFee: o.shippingFee,
+        otherFee: o.otherFee,
+        refundAmount: o.refundAmount,
+      });
+      return {
+        id: o.id,
+        orderNo: o.orderNo,
+        customerName: o.customerName,
+        refundAmount: o.refundAmount,
+        refundPerformanceAmount: perfAmount,
+        refundedAt: o.refundedAt,
+        refundStatus: o.refundStatus,
+        salesName: o.sales.name,
+      };
+    });
+    const totalRefundPerformance = refundPerformanceOrders.reduce(
+      (s, o) => s + o.refundPerformanceAmount,
+      0
+    );
+
     const totalProfit = isAdmin
-      ? orders.reduce(
+      ? periodOrdersForShip.reduce(
           (s, o) =>
             s +
             calcOrderProfit(
@@ -130,16 +186,24 @@ export async function GET(request: NextRequest) {
       channelMap.set(ch, (channelMap.get(ch) || 0) + 1);
     }
 
+    const orderChannelAmount = new Map<string, number>();
+    const orderChannelIds = new Map<string, Set<string>>();
+    for (const r of collectRecords) {
+      const ch = r.order.customer.channel?.name || "未分类";
+      orderChannelAmount.set(ch, (orderChannelAmount.get(ch) || 0) + (Number(r.amount) || 0));
+      if (!orderChannelIds.has(ch)) orderChannelIds.set(ch, new Set());
+      orderChannelIds.get(ch)!.add(r.orderId);
+    }
+
     const orderChannelMap = new Map<
       string,
       { count: number; amount: number }
     >();
-    for (const o of orders) {
-      const ch = o.customer.channel?.name || "未分类";
-      const cur = orderChannelMap.get(ch) || { count: 0, amount: 0 };
-      cur.count += 1;
-      cur.amount += getPerformance(o);
-      orderChannelMap.set(ch, cur);
+    for (const [ch, ids] of orderChannelIds) {
+      orderChannelMap.set(ch, {
+        count: ids.size,
+        amount: orderChannelAmount.get(ch) ?? 0,
+      });
     }
 
     const allChannels = new Set([
@@ -172,21 +236,27 @@ export async function GET(request: NextRequest) {
             };
           });
 
-          const categoryOrders = orders.filter((o) => {
-            const name = o.customer.channel?.name;
-            return name && childNames.has(name);
-          });
+          const categoryAmount = collectRecords
+            .filter((r) => {
+              const name = r.order.customer.channel?.name;
+              return name && childNames.has(name);
+            })
+            .reduce((s, r) => s + (Number(r.amount) || 0), 0);
 
-          const totalAmount = categoryOrders.reduce(
-            (s, o) => s + getPerformance(o),
-            0
+          const categoryOrderIds = new Set(
+            collectRecords
+              .filter((r) => {
+                const name = r.order.customer.channel?.name;
+                return name && childNames.has(name);
+              })
+              .map((r) => r.orderId)
           );
 
           return {
             categoryId: category.id,
             categoryName: category.name,
-            totalAmount,
-            orderCount: categoryOrders.length,
+            totalAmount: categoryAmount,
+            orderCount: categoryOrderIds.size,
             channels: childStats.filter(
               (c) => c.orderCount > 0 || c.amount > 0
             ),
@@ -196,34 +266,73 @@ export async function GET(request: NextRequest) {
 
     const salesStats = isAdmin
       ? salesUsers.map((sales) => {
-          const salesOrders = orders.filter((o) => o.salesId === sales.id);
+          const salesRecords = collectRecords.filter(
+            (r) => r.salesId === sales.id
+          );
+          const salesOrderIds = new Set(salesRecords.map((r) => r.orderId));
+          const salesRefund = refundPerformanceOrders.filter(
+            (o) =>
+              refundOrders.find((ro) => ro.id === o.id)?.salesId === sales.id
+          );
           return {
             salesId: sales.id,
             salesName: sales.name,
-            orderCount: salesOrders.length,
-            totalAmount: salesOrders.reduce((s, o) => s + getPerformance(o), 0),
-            paidAmount: salesOrders.reduce((s, o) => s + o.paidAmount, 0),
-            profit: salesOrders.reduce(
-              (s, o) =>
-                s +
-                calcOrderProfit(
-                  o.totalAmount,
-                  o.productCostTotal,
-                  o.shippingFee ?? 0,
-                  o.otherFee ?? 0
-                ),
+            orderCount: salesOrderIds.size,
+            totalAmount: salesRecords.reduce(
+              (s, r) => s + (Number(r.amount) || 0),
               0
             ),
+            paidAmount: salesRecords.reduce(
+              (s, r) => s + (Number(r.amount) || 0),
+              0
+            ),
+            refundAmount: salesRefund.reduce(
+              (s, o) => s + o.refundPerformanceAmount,
+              0
+            ),
+            profit: 0,
           };
         })
       : undefined;
 
+    if (isAdmin && salesStats) {
+      const profitOrders = await prisma.order.findMany({
+        where: {
+          deletedAt: null,
+          orderedAt: { gte: start, lte: end },
+        },
+        select: {
+          salesId: true,
+          totalAmount: true,
+          productCostTotal: true,
+          shippingFee: true,
+          otherFee: true,
+        },
+      });
+      for (const row of salesStats) {
+        row.profit = profitOrders
+          .filter((o) => o.salesId === row.salesId)
+          .reduce(
+            (s, o) =>
+              s +
+              calcOrderProfit(
+                o.totalAmount,
+                o.productCostTotal,
+                o.shippingFee ?? 0,
+                o.otherFee ?? 0
+              ),
+            0
+          );
+      }
+    }
+
     const year = new Date().getFullYear();
+    const performanceDetails = buildPerformanceDetails(collectRecords, isAdmin);
     const monthlyCurves = {
       performance: buildMonthlyYoY(
-        allOrdersForCurves.map((o) => ({
-          date: o.orderedAt,
-          value: getPerformance(o),
+        allCollectForCurves.map((r) => ({
+          date: r.eventAt,
+          value: Number(r.amount) || 0,
         })),
         year
       ),
@@ -255,12 +364,17 @@ export async function GET(request: NextRequest) {
       orderStats: {
         total: totalOrders,
         totalAmount: totalRevenue,
-        paidAmount: totalPaid,
-        unpaidAmount: totalRevenue - totalPaid,
-        shippedCount: orders.filter((o) => o.isShipped).length,
-        unshippedCount: orders.filter((o) => !o.isShipped).length,
+        paidAmount: totalRevenue,
+        unpaidAmount: 0,
+        shippedCount: periodOrdersForShip.filter((o) => o.isShipped).length,
+        unshippedCount: periodOrdersForShip.filter((o) => !o.isShipped).length,
         totalProfit,
       },
+      refundStats: {
+        totalAmount: totalRefundPerformance,
+        orders: refundPerformanceOrders,
+      },
+      performanceDetails,
       salesStats,
       monthlyCurves,
       salesUsers: isAdmin ? salesUsers : undefined,
@@ -270,14 +384,82 @@ export async function GET(request: NextRequest) {
   }
 }
 
-function buildCurveOrderWhere(
-  session: { role: string; id: string },
-  salesIdFilter?: string
+function buildPerformanceDetails(
+  collectRecords: {
+    id: string;
+    orderId: string;
+    amount: number;
+    eventAt: Date;
+    order: {
+      orderNo: string;
+      customerName: string;
+      sales: { name: string };
+    };
+  }[],
+  showSales: boolean
 ) {
-  const where: Record<string, unknown> = { deletedAt: null };
-  if (session.role === "SALES") where.salesId = session.id;
-  else if (salesIdFilter) where.salesId = salesIdFilter;
-  return where;
+  const orderMap = new Map<
+    string,
+    {
+      id: string;
+      orderNo: string;
+      customerName: string;
+      salesName: string;
+      performanceAmount: number;
+      eventCount: number;
+      lastEventAt: Date;
+    }
+  >();
+
+  const events = collectRecords
+    .map((r) => ({
+      id: r.id,
+      orderId: r.orderId,
+      orderNo: r.order.orderNo,
+      customerName: r.order.customerName,
+      salesName: r.order.sales.name,
+      amount: Number(r.amount) || 0,
+      eventAt: r.eventAt,
+    }))
+    .sort((a, b) => b.eventAt.getTime() - a.eventAt.getTime());
+
+  for (const r of collectRecords) {
+    const amount = Number(r.amount) || 0;
+    const existing = orderMap.get(r.orderId);
+    if (!existing) {
+      orderMap.set(r.orderId, {
+        id: r.orderId,
+        orderNo: r.order.orderNo,
+        customerName: r.order.customerName,
+        salesName: r.order.sales.name,
+        performanceAmount: amount,
+        eventCount: 1,
+        lastEventAt: r.eventAt,
+      });
+      continue;
+    }
+    existing.performanceAmount += amount;
+    existing.eventCount += 1;
+    if (r.eventAt > existing.lastEventAt) {
+      existing.lastEventAt = r.eventAt;
+    }
+  }
+
+  const orders = Array.from(orderMap.values()).sort(
+    (a, b) => b.lastEventAt.getTime() - a.lastEventAt.getTime()
+  );
+
+  return {
+    orders: orders.map((o) => ({
+      ...o,
+      lastEventAt: o.lastEventAt.toISOString(),
+    })),
+    events: events.map((e) => ({
+      ...e,
+      eventAt: e.eventAt.toISOString(),
+    })),
+    showSales,
+  };
 }
 
 function buildCurveCustomerWhere(

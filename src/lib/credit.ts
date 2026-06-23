@@ -1,6 +1,10 @@
 import { prisma } from "@/lib/prisma";
 import { toBottleCount, resolveBottlesPerUnit } from "@/lib/unit-convert";
 import { syncPaymentFields } from "@/lib/order-math";
+import {
+  calcReconcilePerformanceAmount,
+  recordCollectPerformance,
+} from "@/lib/performance";
 import type {
   CreditOrderStatus,
   PaymentStatus,
@@ -431,6 +435,11 @@ export async function processPaymentWithReconciliation(
     ? new Date(payment.paidAt)
     : synced.paidAt;
 
+  const performanceAmount =
+    reconcileItems.length > 0
+      ? calcReconcilePerformanceAmount(order.items, reconcileItems)
+      : 0;
+
   let creditStatus: CreditOrderStatus | null = order.creditStatus;
   if (synced.paymentStatus === "PAID") {
     creditStatus = "SETTLED";
@@ -462,7 +471,7 @@ export async function processPaymentWithReconciliation(
     });
 
     if (reconcileItems.length > 0) {
-      await tx.creditReconciliationRecord.create({
+      const rec = await tx.creditReconciliationRecord.create({
         data: {
           orderId,
           customerId: order.customerId,
@@ -471,9 +480,26 @@ export async function processPaymentWithReconciliation(
           action: "RECONCILE",
           paidAmount: synced.paidAmount,
           paymentStatus: synced.paymentStatus,
+          performanceAmount,
+          paidAt: synced.paymentStatus === "UNPAID" ? null : paidAt,
           detail: JSON.stringify(reconcileItems),
         },
       });
+
+      if (
+        performanceAmount > 0 &&
+        synced.paymentStatus !== "UNPAID" &&
+        paidAt
+      ) {
+        await recordCollectPerformance(tx, {
+          orderId,
+          salesId: order.salesId,
+          amount: performanceAmount,
+          eventAt: paidAt,
+          reconciliationRecordId: rec.id,
+          detail: JSON.stringify(reconcileItems),
+        });
+      }
     }
   });
 

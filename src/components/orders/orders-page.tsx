@@ -65,6 +65,9 @@ interface Order {
   auditLogs?: AuditLog[];
   isDeleted?: boolean;
   deletedAt?: string | null;
+  refundStatus?: "NONE" | "PARTIAL" | "FULL";
+  refundAmount?: number;
+  refundedAt?: string | null;
   creditLines?: {
     orderItemId: string;
     unreconciledQty: number;
@@ -162,6 +165,11 @@ export function OrdersPage({ user }: { user: SessionUser }) {
   });
   const [editTotalAmount, setEditTotalAmount] = useState(0);
   const [editAmountReason, setEditAmountReason] = useState("");
+  const [refundForm, setRefundForm] = useState({
+    refundStatus: "NONE" as "NONE" | "PARTIAL" | "FULL",
+    refundAmount: 0,
+    refundedAt: "",
+  });
 
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -291,6 +299,11 @@ export function OrdersPage({ user }: { user: SessionUser }) {
       });
       setEditTotalAmount(full.totalAmount);
       setEditAmountReason("");
+      setRefundForm({
+        refundStatus: full.refundStatus || "NONE",
+        refundAmount: full.refundAmount ?? 0,
+        refundedAt: full.refundedAt ? String(full.refundedAt).slice(0, 16) : "",
+      });
       setDetailOpen(true);
     } catch {
       alert("无法加载订单详情，请稍后重试");
@@ -384,6 +397,19 @@ export function OrdersPage({ user }: { user: SessionUser }) {
     }
     if (canManageOps && shippingChanged) {
       body.shipping = { ...shippingForm, shippedAt: shippingForm.shippedAt || undefined };
+    }
+    const selectedRefundedAt = selected.refundedAt
+      ? String(selected.refundedAt).slice(0, 16)
+      : "";
+    const refundChanged =
+      refundForm.refundStatus !== (selected.refundStatus || "NONE") ||
+      refundForm.refundAmount !== (selected.refundAmount ?? 0) ||
+      refundForm.refundedAt !== selectedRefundedAt;
+    if (canManageOps && refundChanged) {
+      body.refund = {
+        ...refundForm,
+        refundedAt: refundForm.refundedAt || undefined,
+      };
     }
     if (editTotalAmount !== selected.totalAmount) {
       body.totalAmount = editTotalAmount;
@@ -1020,6 +1046,87 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                   <Input placeholder="快递公司" value={shippingForm.carrier} onChange={(e) => setShippingForm({ ...shippingForm, carrier: e.target.value })} />
                   <Input placeholder="运单号" value={shippingForm.trackingNo} onChange={(e) => setShippingForm({ ...shippingForm, trackingNo: e.target.value })} />
                   <Input type="datetime-local" value={shippingForm.shippedAt} onChange={(e) => setShippingForm({ ...shippingForm, shippedAt: e.target.value })} />
+                </div>
+                <h4 className="font-serif font-medium">退款</h4>
+                <div className="grid grid-cols-2 gap-2">
+                  <Select
+                    value={refundForm.refundStatus}
+                    onChange={(e) => {
+                      const status = e.target.value as "NONE" | "PARTIAL" | "FULL";
+                      setRefundForm({
+                        ...refundForm,
+                        refundStatus: status,
+                        refundAmount:
+                          status === "FULL"
+                            ? selected.paidAmount
+                            : status === "NONE"
+                              ? 0
+                              : refundForm.refundAmount,
+                      });
+                    }}
+                  >
+                    <option value="NONE">无退款</option>
+                    <option value="PARTIAL">部分退款</option>
+                    <option value="FULL">全额退款</option>
+                  </Select>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={selected.paidAmount}
+                    step={0.01}
+                    value={refundForm.refundAmount}
+                    disabled={refundForm.refundStatus !== "PARTIAL"}
+                    onChange={(e) =>
+                      setRefundForm({
+                        ...refundForm,
+                        refundAmount: parseFloat(e.target.value) || 0,
+                      })
+                    }
+                    placeholder="退款金额"
+                  />
+                  {refundForm.refundStatus !== "NONE" && (
+                    <Input
+                      type="datetime-local"
+                      className="col-span-2"
+                      value={refundForm.refundedAt}
+                      onChange={(e) =>
+                        setRefundForm({ ...refundForm, refundedAt: e.target.value })
+                      }
+                    />
+                  )}
+                </div>
+              </>
+            )}
+
+            {!canManageOps && (
+              <>
+                <h4 className="font-serif font-medium">发货信息</h4>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div>
+                    <span className="text-muted">发货状态：</span>
+                    {selected.isShipped ? "已发货" : "未发货"}
+                  </div>
+                  {selected.shipping?.carrier && (
+                    <div>
+                      <span className="text-muted">快递公司：</span>
+                      {selected.shipping.carrier}
+                    </div>
+                  )}
+                  {selected.shipping?.trackingNo && (
+                    <div className="col-span-2">
+                      <span className="text-muted">运单号：</span>
+                      {selected.shipping.trackingNo}
+                    </div>
+                  )}
+                  {selected.shipping?.shippedAt && (
+                    <div>
+                      <span className="text-muted">发货时间：</span>
+                      {formatDate(selected.shipping.shippedAt)}
+                    </div>
+                  )}
+                  {!selected.isShipped && !selected.shipping?.trackingNo && (
+                    <div className="col-span-2 text-muted">暂无发货信息</div>
+                  )}
                 </div>
               </>
             )}

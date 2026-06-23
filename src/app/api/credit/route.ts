@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth";
 import { handleApiError } from "@/lib/api";
 import { getCreditStats, syncEligibleCreditOrders } from "@/lib/credit";
+import { syncPerformanceData, resolveReconciliationPerformanceAmount, parseReconcileItemsFromDetail } from "@/lib/performance";
 import { toBottleCount, resolveBottlesPerUnit } from "@/lib/unit-convert";
 import { SPEC_UNIT_LABELS } from "@/lib/constants";
 import type { SpecUnit } from "@/generated/prisma/client";
@@ -19,6 +20,11 @@ export async function GET(request: NextRequest) {
         : searchParams.get("salesId") || undefined;
 
     await syncEligibleCreditOrders(salesScope);
+    try {
+      await syncPerformanceData(salesScope);
+    } catch (error) {
+      console.error("[credit] syncPerformanceData", error);
+    }
 
     const stats = await getCreditStats(salesScope);
 
@@ -43,7 +49,6 @@ export async function GET(request: NextRequest) {
           creditLines: true,
           reconciliationRecords: {
             orderBy: { createdAt: "desc" },
-            take: 5,
           },
         },
         orderBy: { orderedAt: "desc" },
@@ -158,7 +163,21 @@ export async function GET(request: NextRequest) {
             };
           }),
           creditLines: o.creditLines,
-          reconciliationRecords: o.reconciliationRecords,
+          reconciliationRecords: o.reconciliationRecords.map((rec) => ({
+            id: rec.id,
+            action: rec.action,
+            paidAmount: rec.paidAmount,
+            paymentStatus: rec.paymentStatus,
+            performanceAmount: resolveReconciliationPerformanceAmount(
+              rec,
+              o.items
+            ),
+            paidAt: rec.paidAt,
+            userName: rec.userName,
+            detail: rec.detail,
+            createdAt: rec.createdAt,
+            items: parseReconcileDetail(rec.detail, o.items),
+          })),
         })),
       };
     });
@@ -171,4 +190,17 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     return handleApiError(error);
   }
+}
+
+function parseReconcileDetail(
+  detail: string | null,
+  orderItems: { id: string; productName: string; specName: string }[]
+) {
+  const reconcileItems = parseReconcileItemsFromDetail(detail);
+  const itemMap = new Map(orderItems.map((i) => [i.id, i]));
+  return reconcileItems.map((i) => ({
+    productName: itemMap.get(i.orderItemId)?.productName ?? "",
+    specName: itemMap.get(i.orderItemId)?.specName ?? "",
+    quantity: i.quantity,
+  }));
 }

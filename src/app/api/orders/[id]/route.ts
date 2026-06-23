@@ -12,6 +12,16 @@ import {
   syncPaymentFields,
 } from "@/lib/order-math";
 import { processPaymentWithReconciliation, ensureCreditOrderActive } from "@/lib/credit";
+import {
+  calcRefundPerformanceAmount,
+  recordRefundPerformance,
+} from "@/lib/performance";
+
+const refundSchema = z.object({
+  refundStatus: z.enum(["NONE", "PARTIAL", "FULL"]),
+  refundAmount: z.number().min(0),
+  refundedAt: z.string().optional(),
+});
 
 const paymentSchema = z.object({
   paymentStatus: z.enum(["UNPAID", "PARTIAL", "PAID"]),
@@ -44,6 +54,7 @@ const updateSchema = z.object({
     )
     .optional(),
   shipping: shippingSchema.optional(),
+  refund: refundSchema.optional(),
 });
 
 export async function GET(
@@ -137,6 +148,9 @@ export async function PATCH(
     if (body.shipping && !["OPERATIONS", "ADMIN"].includes(session.role)) {
       return apiError("只有职能或管理员可设置发货", 403);
     }
+    if (body.refund && !["OPERATIONS", "ADMIN"].includes(session.role)) {
+      return apiError("只有职能或管理员可设置退款", 403);
+    }
     if (body.handlerId !== undefined && session.role === "SALES") {
       return apiError("销售无法修改处理人员", 403);
     }
@@ -219,6 +233,39 @@ export async function PATCH(
       changes.shipping = body.shipping;
     }
 
+    let refundPerformanceAmount = 0;
+    if (body.refund) {
+      let refundAmount = body.refund.refundAmount;
+      if (body.refund.refundStatus === "NONE") refundAmount = 0;
+      else if (body.refund.refundStatus === "FULL") {
+        refundAmount = existing.paidAmount;
+      }
+      if (refundAmount > existing.paidAmount) {
+        return apiError("退款金额不能超过已收金额");
+      }
+      const refundedAt =
+        body.refund.refundStatus === "NONE"
+          ? null
+          : body.refund.refundedAt
+            ? new Date(body.refund.refundedAt)
+            : new Date();
+      orderData.refundStatus = body.refund.refundStatus;
+      orderData.refundAmount = refundAmount;
+      orderData.refundedAt = refundedAt;
+      refundPerformanceAmount = calcRefundPerformanceAmount({
+        totalAmount: existing.totalAmount,
+        productAmount: existing.productAmount,
+        shippingFee: existing.shippingFee,
+        otherFee: existing.otherFee,
+        refundAmount,
+      });
+      changes.refund = {
+        refundStatus: body.refund.refundStatus,
+        refundAmount,
+        refundPerformanceAmount,
+      };
+    }
+
     const order = await prisma.$transaction(async (tx) => {
       if (Object.keys(orderData).length > 0) {
         await tx.order.update({ where: { id }, data: orderData });
@@ -245,6 +292,26 @@ export async function PATCH(
         } else if (body.shipping.isShipped || body.shipping.trackingNo) {
           await tx.shippingInfo.create({
             data: { orderId: id, ...shippingData },
+          });
+        }
+      }
+
+      if (body.refund) {
+        const updated = await tx.order.findUnique({ where: { id } });
+        if (updated && updated.refundAmount > 0 && updated.refundedAt) {
+          await recordRefundPerformance(tx, {
+            orderId: id,
+            salesId: updated.salesId,
+            amount: refundPerformanceAmount,
+            eventAt: updated.refundedAt,
+            detail: JSON.stringify({
+              refundStatus: updated.refundStatus,
+              refundAmount: updated.refundAmount,
+            }),
+          });
+        } else if (updated?.refundAmount === 0) {
+          await tx.performanceRecord.deleteMany({
+            where: { orderId: id, type: "REFUND" },
           });
         }
       }

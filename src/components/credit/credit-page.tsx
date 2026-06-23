@@ -23,6 +23,18 @@ interface CreditItem {
   badDebtRecoveredQty: number;
 }
 
+interface ReconciliationRecord {
+  id: string;
+  action: string;
+  paidAmount: number;
+  paymentStatus: string;
+  performanceAmount: number;
+  paidAt: string | null;
+  userName: string;
+  createdAt: string;
+  items: { productName: string; specName: string; quantity: number }[];
+}
+
 interface CreditOrder {
   id: string;
   orderNo: string;
@@ -36,6 +48,7 @@ interface CreditOrder {
   badDebtNotes: string | null;
   orderedAt: string;
   items: CreditItem[];
+  reconciliationRecords?: ReconciliationRecord[];
 }
 
 interface CreditCustomer {
@@ -74,6 +87,7 @@ export function CreditPage({ user }: { user: SessionUser }) {
 
   const [payModalOpen, setPayModalOpen] = useState(false);
   const [badDebtModalOpen, setBadDebtModalOpen] = useState(false);
+  const [reconcileHistoryOpen, setReconcileHistoryOpen] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<CreditOrder | null>(null);
   const [paymentForm, setPaymentForm] = useState({
     paymentStatus: "PARTIAL" as "UNPAID" | "PARTIAL" | "PAID",
@@ -106,6 +120,11 @@ export function CreditPage({ user }: { user: SessionUser }) {
   useEffect(() => {
     load();
   }, [load]);
+
+  function openReconcileHistory(order: CreditOrder) {
+    setSelectedOrder(order);
+    setReconcileHistoryOpen(true);
+  }
 
   function openPayment(order: CreditOrder) {
     setSelectedOrder(order);
@@ -372,22 +391,33 @@ export function CreditPage({ user }: { user: SessionUser }) {
                               {o.badDebtNotes && ` · ${o.badDebtNotes}`}
                             </div>
                           )}
-                          {canEdit && o.creditStatus !== "BAD_DEBT" && (
-                            <div className="flex gap-2 pt-1">
-                              <Button size="sm" onClick={() => openPayment(o)}>
-                                <Wallet className="h-3 w-3 mr-1" />
-                                核销付款
-                              </Button>
+                          <div className="flex flex-wrap gap-2 pt-1">
+                            {(o.reconciliationRecords?.length ?? 0) > 0 && (
                               <Button
                                 size="sm"
                                 variant="secondary"
-                                onClick={() => openBadDebt(o)}
+                                onClick={() => openReconcileHistory(o)}
                               >
-                                <AlertTriangle className="h-3 w-3 mr-1" />
-                                标记坏账
+                                查看核销记录
                               </Button>
-                            </div>
-                          )}
+                            )}
+                            {canEdit && o.creditStatus !== "BAD_DEBT" && (
+                              <>
+                                <Button size="sm" onClick={() => openPayment(o)}>
+                                  <Wallet className="h-3 w-3 mr-1" />
+                                  核销付款
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  onClick={() => openBadDebt(o)}
+                                >
+                                  <AlertTriangle className="h-3 w-3 mr-1" />
+                                  标记坏账
+                                </Button>
+                              </>
+                            )}
+                          </div>
                         </CardContent>
                       </Card>
                     ))}
@@ -572,6 +602,84 @@ export function CreditPage({ user }: { user: SessionUser }) {
           </Button>
           <Button onClick={handleBadDebtSave} disabled={saving}>
             {saving ? "保存中..." : "确认坏账"}
+          </Button>
+        </ModalFooter>
+      </Modal>
+
+      <Modal
+        open={reconcileHistoryOpen}
+        onClose={() => setReconcileHistoryOpen(false)}
+        title={`核销记录 · ${selectedOrder?.orderNo || ""}`}
+        className="max-w-2xl"
+      >
+        {selectedOrder && (
+          <div className="space-y-4 max-h-[60vh] overflow-y-auto">
+            {(selectedOrder.reconciliationRecords ?? []).length === 0 ? (
+              <p className="text-muted text-sm text-center py-8">暂无核销记录</p>
+            ) : (
+              selectedOrder.reconciliationRecords!.map((rec) => (
+                <div
+                  key={rec.id}
+                  className="border border-border rounded-sm p-3 space-y-2"
+                >
+                  <div className="flex justify-between text-sm">
+                    <span className="font-medium">{rec.action}</span>
+                    <span className="text-muted">{formatDate(rec.createdAt)}</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div>
+                      <span className="text-muted">操作人：</span>
+                      {rec.userName}
+                    </div>
+                    <div>
+                      <span className="text-muted">收款状态：</span>
+                      {rec.paymentStatus}
+                    </div>
+                    <div>
+                      <span className="text-muted">累计已收：</span>
+                      {formatCurrency(rec.paidAmount)}
+                    </div>
+                    <div>
+                      <span className="text-muted">计入业绩：</span>
+                      <span className="text-wine">
+                        {formatCurrency(rec.performanceAmount)}
+                      </span>
+                    </div>
+                    {rec.paidAt && (
+                      <div className="col-span-2">
+                        <span className="text-muted">收款时间：</span>
+                        {formatDate(rec.paidAt)}
+                      </div>
+                    )}
+                  </div>
+                  {rec.items.length > 0 && (
+                    <table className="w-full text-xs ink-table mt-2">
+                      <thead>
+                        <tr className="text-muted border-b border-border/40">
+                          <th className="pb-1 text-left">产品</th>
+                          <th className="pb-1 text-right">核销数量</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rec.items.map((item, idx) => (
+                          <tr key={idx} className="border-b border-border/20">
+                            <td className="py-1">
+                              {item.productName} · {item.specName}
+                            </td>
+                            <td className="py-1 text-right">{item.quantity}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        )}
+        <ModalFooter>
+          <Button variant="secondary" onClick={() => setReconcileHistoryOpen(false)}>
+            关闭
           </Button>
         </ModalFooter>
       </Modal>
