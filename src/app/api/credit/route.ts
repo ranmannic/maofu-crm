@@ -1,0 +1,174 @@
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireSession } from "@/lib/auth";
+import { handleApiError } from "@/lib/api";
+import { getCreditStats, syncEligibleCreditOrders } from "@/lib/credit";
+import { toBottleCount, resolveBottlesPerUnit } from "@/lib/unit-convert";
+import { SPEC_UNIT_LABELS } from "@/lib/constants";
+import type { SpecUnit } from "@/generated/prisma/client";
+
+export async function GET(request: NextRequest) {
+  try {
+    const session = await requireSession(["ADMIN", "SALES", "OPERATIONS"]);
+    const { searchParams } = new URL(request.url);
+    const customerQ = searchParams.get("customer")?.trim();
+
+    const salesScope =
+      session.role === "SALES"
+        ? session.id
+        : searchParams.get("salesId") || undefined;
+
+    await syncEligibleCreditOrders(salesScope);
+
+    const stats = await getCreditStats(salesScope);
+
+    const orderWhere: Record<string, unknown> = {
+      deletedAt: null,
+      creditStatus: { in: ["ACTIVE", "BAD_DEBT"] },
+    };
+    if (salesScope) orderWhere.salesId = salesScope;
+
+    const [orders, specRows] = await Promise.all([
+      prisma.order.findMany({
+        where: orderWhere,
+        include: {
+          customer: {
+            select: {
+              id: true,
+              name: true,
+              sales: { select: { id: true, name: true } },
+            },
+          },
+          items: true,
+          creditLines: true,
+          reconciliationRecords: {
+            orderBy: { createdAt: "desc" },
+            take: 5,
+          },
+        },
+        orderBy: { orderedAt: "desc" },
+      }),
+      prisma.productSpec.findMany({
+        select: { id: true, name: true, unitType: true, bottlesPerUnit: true },
+      }),
+    ]);
+
+    const specMap = new Map(specRows.map((s) => [s.id, s]));
+
+    function bottlesPerUnit(specId: string, specName: string, unitType: SpecUnit) {
+      const spec = specMap.get(specId);
+      return resolveBottlesPerUnit(
+        spec?.name ?? specName,
+        spec?.unitType ?? unitType,
+        spec?.bottlesPerUnit
+      );
+    }
+
+    const customerIds = [...new Set(orders.map((o) => o.customerId))];
+    const inventories = await prisma.customerInventory.findMany({
+      where: {
+        customerId: { in: customerIds },
+        ...(salesScope ? { customer: { salesId: salesScope } } : {}),
+      },
+      orderBy: { productName: "asc" },
+    });
+
+    const customerMap = new Map<
+      string,
+      {
+        id: string;
+        name: string;
+        sales: { id: string; name: string };
+        inventory: typeof inventories;
+        orders: typeof orders;
+      }
+    >();
+
+    for (const order of orders) {
+      if (customerQ && !order.customerName.includes(customerQ)) continue;
+      if (order.creditStatus === "SETTLED") continue;
+      if (order.paymentStatus === "PAID" && order.creditStatus !== "BAD_DEBT")
+        continue;
+
+      const cid = order.customerId;
+      if (!customerMap.has(cid)) {
+        customerMap.set(cid, {
+          id: cid,
+          name: order.customerName,
+          sales: order.customer.sales,
+          inventory: inventories.filter((i) => i.customerId === cid),
+          orders: [],
+        });
+      }
+      customerMap.get(cid)!.orders.push(order);
+    }
+
+    const customers = Array.from(customerMap.values()).map((c) => {
+      const unreconciledAmount = c.orders
+        .filter((o) => o.creditStatus === "ACTIVE")
+        .reduce((s, o) => s + Math.max(0, o.totalAmount - o.paidAmount), 0);
+
+      return {
+        id: c.id,
+        name: c.name,
+        sales: c.sales,
+        unreconciledAmount,
+        inventory: c.inventory.map((i) => ({
+          id: i.id,
+          productName: i.productName,
+          specName: i.specName,
+          unitLabel: SPEC_UNIT_LABELS[i.unitType],
+          unreconciledQty: i.unreconciledQty,
+          unreconciledBottles: toBottleCount(
+            i.unreconciledQty,
+            bottlesPerUnit(i.productSpecId, i.specName, i.unitType)
+          ),
+        })),
+        orders: c.orders.map((o) => ({
+          id: o.id,
+          orderNo: o.orderNo,
+          totalAmount: o.totalAmount,
+          paidAmount: o.paidAmount,
+          unreconciledAmount: Math.max(0, o.totalAmount - o.paidAmount),
+          paymentStatus: o.paymentStatus,
+          creditStatus: o.creditStatus,
+          badDebtAmount: o.badDebtAmount,
+          badDebtGoodsRecovered: o.badDebtGoodsRecovered,
+          badDebtNotes: o.badDebtNotes,
+          orderedAt: o.orderedAt,
+          items: o.items.map((item) => {
+            const line = o.creditLines.find((l) => l.orderItemId === item.id);
+            const perUnit = bottlesPerUnit(
+              item.productSpecId,
+              item.specName,
+              item.unitType
+            );
+            const unreconciledQty = line?.unreconciledQty ?? item.quantity;
+            return {
+              id: item.id,
+              productName: item.productName,
+              specName: item.specName,
+              unitType: item.unitType,
+              unitLabel: SPEC_UNIT_LABELS[item.unitType],
+              quantity: item.quantity,
+              quantityBottles: toBottleCount(item.quantity, perUnit),
+              unreconciledQty,
+              unreconciledBottles: toBottleCount(unreconciledQty, perUnit),
+              badDebtRecoveredQty: line?.badDebtRecoveredQty ?? 0,
+            };
+          }),
+          creditLines: o.creditLines,
+          reconciliationRecords: o.reconciliationRecords,
+        })),
+      };
+    });
+
+    return NextResponse.json({
+      stats,
+      customers,
+      canEdit: ["OPERATIONS", "ADMIN"].includes(session.role),
+    });
+  } catch (error) {
+    return handleApiError(error);
+  }
+}

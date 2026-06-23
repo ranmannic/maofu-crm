@@ -8,6 +8,7 @@ import type { SpecUnit } from "@/generated/prisma/client";
 const specUpdateSchema = z.object({
   name: z.string().min(1).optional(),
   unitType: z.enum(["BOTTLE", "BOX", "PIECE", "SET"]).optional(),
+  bottlesPerUnit: z.number().int().min(1).optional(),
   price: z.number().min(0).optional(),
   cost: z.number().min(0).optional(),
 });

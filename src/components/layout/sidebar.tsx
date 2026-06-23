@@ -11,6 +11,7 @@ import {
   LogOut,
   Wine,
   GitBranch,
+  ClipboardList,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ROLE_LABELS, type SessionUser } from "@/lib/auth-types";
@@ -19,6 +20,7 @@ const navItems = [
   { href: "/", label: "数据概览", icon: LayoutDashboard, roles: ["ADMIN", "SALES"] },
   { href: "/customers", label: "客户管理", icon: Users, roles: ["ADMIN", "SALES"] },
   { href: "/orders", label: "订单管理", icon: ShoppingCart, roles: ["ADMIN", "SALES", "OPERATIONS"] },
+  { href: "/credit", label: "账期核销", icon: ClipboardList, roles: ["ADMIN", "SALES", "OPERATIONS"] },
   { href: "/products", label: "产品管理", icon: Package, roles: ["ADMIN"] },
   { href: "/channels", label: "渠道管理", icon: GitBranch, roles: ["ADMIN"] },
   { href: "/users", label: "账号管理", icon: UserCog, roles: ["ADMIN"] },
@@ -36,7 +38,7 @@ export function Sidebar({ user }: { user: SessionUser }) {
   }
 
   return (
-    <aside className="flex w-64 flex-col min-h-screen relative overflow-hidden">
+    <aside className="relative flex w-64 shrink-0 flex-col h-screen overflow-hidden">
       <div
         className="absolute inset-0 bg-gradient-to-b from-[#3d2b1f] via-[#2b2620] to-[#1f1a16]"
         aria-hidden

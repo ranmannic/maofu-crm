@@ -256,7 +256,24 @@ pm2 logs maofu-crm --lines 50
 - [ ] 确认是否涉及 `prisma/schema.prisma` 变更
 - [ ] **未**执行 `db:seed` / `db:reset`
 - [ ] 构建成功、PM2 运行正常
-- [ ] 登录并抽查：客户列表、订单列表、新建订单
+- [ ] 登录并抽查：客户列表、订单列表、新建订单、**账期核销页**
+
+### 6.1 两种更新路径
+
+| 场景 | 数据库命令 |
+|------|------------|
+| 生产一直使用 `migrate deploy` 跟踪 migration | `npx prisma migrate deploy` |
+| 生产此前仅用 `db push`、migration 历史与库不一致 | 备份后 `npx prisma db push` |
+
+两种路径之后均需：
+
+```bash
+npx prisma generate
+npm run build
+pm2 restart maofu-crm
+```
+
+> 若 `migrate deploy` 报 migration 冲突，**不要**强行 reset；改用 `db push` 或联系维护人员处理。
 
 ---
 
@@ -319,6 +336,14 @@ pm2 restart maofu-crm
 
 - 旧一级渠道不会自动删除；seed 脚本会迁移客户到新渠道
 - **生产环境不要跑 seed**；应在管理后台手动调整渠道，或在维护窗口执行经过评审的 SQL/脚本
+
+#### 账期核销与产品规格（v0.2+）
+
+新增表：`CustomerInventory`、`OrderCreditLine`、`CreditReconciliationRecord`；`Order` 增加 `creditStatus`、坏账字段；`ProductSpec` 增加 `bottlesPerUnit`（折合瓶数）。
+
+- 部署后**无需 seed**：打开「账期核销」页会自动补全符合条件的部分付款 / 未付款已发货订单
+- 已有产品规格 `bottlesPerUnit` 默认为 1；整箱等规格请在「产品管理」中设置折合瓶数
+- 若生产库此前仅用 `db push` 同步、未跑过 migration，见下方 [6.1 节](#61-两种更新路径)
 
 #### 重命名 / 删除字段
 
@@ -468,6 +493,18 @@ pm2 restart maofu-crm
 sudo chown -R $(whoami):$(whoami) /var/lib/maofu-crm
 chmod 600 /var/lib/maofu-crm/prod.db
 ```
+
+### Q7：账期核销页无数据 / 部分付款订单未出现
+
+打开账期核销页时会自动同步符合条件的订单。若仍缺失：
+
+1. 确认订单为**部分付款**，或**未付款且已发货**
+2. 确认订单未结清（已全额收款的不会显示）
+3. 重启应用确保 Prisma Client 已更新（见 Q4）
+
+### Q8：未核销瓶数统计不准
+
+在「产品管理 → 编辑规格」中设置**折合瓶数**（如整箱 6 瓶填 `6`）。
 
 ---
 

@@ -13,6 +13,7 @@ import { apiError, handleApiError } from "@/lib/api";
 import { parsePagination, paginatedResponse } from "@/lib/pagination";
 import { enrichOrderForList } from "@/lib/serializers";
 import { logOrderChange } from "@/lib/order-audit";
+import { processPaymentWithReconciliation } from "@/lib/credit";
 import type { Prisma } from "@/generated/prisma/client";
 
 const orderItemSchema = z.object({
@@ -30,6 +31,26 @@ const createOrderSchema = z.object({
   amountAdjustReason: z.string().optional(),
   notes: z.string().optional(),
   handlerId: z.string().optional(),
+  payment: z
+    .object({
+      paymentStatus: z.enum(["UNPAID", "PARTIAL", "PAID"]),
+      paidAmount: z.number().min(0),
+      paidAt: z.string().optional(),
+    })
+    .optional(),
+  reconcileItems: z
+    .array(
+      z
+        .object({
+          orderItemId: z.string().optional(),
+          productSpecId: z.string().optional(),
+          quantity: z.number().int().min(0),
+        })
+        .refine((i) => i.orderItemId || i.productSpecId, {
+          message: "核销项需指定 orderItemId 或 productSpecId",
+        })
+    )
+    .optional(),
 });
 
 export async function GET(request: NextRequest) {
@@ -216,8 +237,62 @@ export async function POST(request: NextRequest) {
       calculatedAmount,
     });
 
+    if (
+      body.payment &&
+      body.payment.paymentStatus !== "UNPAID"
+    ) {
+      if (!["OPERATIONS", "ADMIN"].includes(session.role)) {
+        return apiError("仅职能或管理员可在创建时设置收款", 403);
+      }
+      if (!body.reconcileItems?.length) {
+        return apiError("创建部分付款订单需填写核销产品及数量", 400);
+      }
+      const reconcileItems = body.reconcileItems
+        .filter((i) => i.quantity > 0)
+        .map((item) => {
+          if (item.orderItemId) {
+            return { orderItemId: item.orderItemId, quantity: item.quantity };
+          }
+          const orderItem = order.items.find(
+            (i) => i.productSpecId === item.productSpecId
+          );
+          if (!orderItem) {
+            throw new Error("核销产品与订单明细不匹配");
+          }
+          return { orderItemId: orderItem.id, quantity: item.quantity };
+        });
+      if (reconcileItems.length === 0) {
+        return apiError("创建部分付款订单需填写核销产品及数量", 400);
+      }
+      try {
+        await processPaymentWithReconciliation(
+          order.id,
+          body.payment,
+          reconcileItems,
+          session.id,
+          session.name
+        );
+      } catch (err) {
+        await prisma.order.delete({ where: { id: order.id } });
+        if (err instanceof Error) return apiError(err.message);
+        throw err;
+      }
+    }
+
+    const finalOrder = await prisma.order.findUnique({
+      where: { id: order.id },
+      include: {
+        items: true,
+        customer: true,
+        sales: { select: { id: true, name: true } },
+        handler: { select: { id: true, name: true } },
+        shipping: true,
+        creditLines: true,
+      },
+    });
+
     return NextResponse.json(
-      enrichOrderForList(order, session.role === "ADMIN"),
+      enrichOrderForList(finalOrder!, session.role === "ADMIN"),
       { status: 201 }
     );
   } catch (error) {

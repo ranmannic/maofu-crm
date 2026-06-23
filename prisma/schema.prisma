@@ -26,6 +26,12 @@ enum PaymentStatus {
   PAID
 }
 
+enum CreditOrderStatus {
+  ACTIVE
+  SETTLED
+  BAD_DEBT
+}
+
 model User {
   id        String   @id @default(cuid())
   username  String   @unique
@@ -65,7 +71,8 @@ model Customer {
   createdAt DateTime     @default(now())
   updatedAt DateTime     @updatedAt
 
-  orders Order[]
+  orders            Order[]
+  creditInventories CustomerInventory[]
 }
 
 model Product {
@@ -84,6 +91,7 @@ model ProductSpec {
   product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
   name      String
   unitType  SpecUnit @default(BOTTLE)
+  bottlesPerUnit Int @default(1)
   price     Float
   cost      Float    @default(0)
   createdAt DateTime @default(now())
@@ -117,12 +125,18 @@ model Order {
   paidAt             DateTime?
   notes              String?
   deletedAt          DateTime?
+  creditStatus       CreditOrderStatus?
+  badDebtAmount      Float?
+  badDebtGoodsRecovered Boolean?
+  badDebtNotes       String?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
-  items     OrderItem[]
-  shipping  ShippingInfo?
-  auditLogs OrderAuditLog[]
+  items                  OrderItem[]
+  shipping               ShippingInfo?
+  auditLogs              OrderAuditLog[]
+  creditLines            OrderCreditLine[]
+  reconciliationRecords  CreditReconciliationRecord[]
 }
 
 model OrderItem {
@@ -162,4 +176,53 @@ model OrderAuditLog {
   action    String
   changes   String?
   createdAt DateTime @default(now())
+}
+
+model CustomerInventory {
+  id              String   @id @default(cuid())
+  customerId      String
+  customer        Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  productId       String
+  productSpecId   String
+  productName     String
+  specName        String
+  unitType        SpecUnit @default(BOTTLE)
+  unreconciledQty Int      @default(0)
+  reconciledQty   Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([customerId, productSpecId])
+}
+
+model OrderCreditLine {
+  id                  String   @id @default(cuid())
+  orderId             String
+  order               Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderItemId         String   @unique
+  customerId          String
+  productSpecId       String
+  productName         String
+  specName            String
+  unitType            SpecUnit @default(BOTTLE)
+  orderQty            Int
+  unreconciledQty     Int      @default(0)
+  reconciledQty       Int      @default(0)
+  badDebtRecoveredQty Int      @default(0)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
+
+model CreditReconciliationRecord {
+  id            String        @id @default(cuid())
+  orderId       String
+  order         Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  customerId    String
+  userId        String
+  userName      String
+  action        String
+  paidAmount    Float         @default(0)
+  paymentStatus PaymentStatus @default(UNPAID)
+  detail        String?
+  createdAt     DateTime      @default(now())
 }

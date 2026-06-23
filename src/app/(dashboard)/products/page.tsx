@@ -5,7 +5,7 @@ import { Plus, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Modal, ModalFooter } from "@/components/ui/modal";
-import { Input, Label, Textarea, Select } from "@/components/ui/input";
+import { Input, Label, Textarea, Select, QtyInput } from "@/components/ui/input";
 import { formatCurrency } from "@/lib/utils";
 import { SPEC_UNIT_LABELS, SPEC_UNIT_OPTIONS } from "@/lib/constants";
 import type { SpecUnit } from "@/generated/prisma/client";
@@ -14,6 +14,7 @@ interface ProductSpec {
   id: string;
   name: string;
   unitType: SpecUnit;
+  bottlesPerUnit: number;
   price: number;
   cost: number;
 }
@@ -38,6 +39,7 @@ export default function ProductsPage() {
   const [specForm, setSpecForm] = useState({
     name: "",
     unitType: "BOTTLE" as SpecUnit,
+    bottlesPerUnit: 1,
     price: 0,
     cost: 0,
   });
@@ -72,7 +74,7 @@ export default function ProductsPage() {
   function openSpecCreate(productId: string) {
     setSelectedProductId(productId);
     setEditingSpec(null);
-    setSpecForm({ name: "", unitType: "BOTTLE", price: 0, cost: 0 });
+    setSpecForm({ name: "", unitType: "BOTTLE", bottlesPerUnit: 1, price: 0, cost: 0 });
     setError("");
     setSpecModal(true);
   }
@@ -83,6 +85,7 @@ export default function ProductsPage() {
     setSpecForm({
       name: spec.name,
       unitType: spec.unitType,
+      bottlesPerUnit: spec.bottlesPerUnit ?? 1,
       price: spec.price,
       cost: spec.cost,
     });
@@ -201,6 +204,7 @@ export default function ProductsPage() {
                     <tr className="border-b border-border text-left text-muted">
                       <th className="pb-2 font-medium">规格</th>
                       <th className="pb-2 font-medium">单位</th>
+                      <th className="pb-2 font-medium">折合瓶数</th>
                       <th className="pb-2 font-medium">销售价</th>
                       <th className="pb-2 font-medium">成本价</th>
                       <th className="pb-2 font-medium">毛利</th>
@@ -212,6 +216,7 @@ export default function ProductsPage() {
                       <tr key={s.id} className="border-b border-border/50">
                         <td className="py-2">{s.name}</td>
                         <td className="py-2">{SPEC_UNIT_LABELS[s.unitType]}</td>
+                        <td className="py-2">{s.bottlesPerUnit ?? 1}瓶</td>
                         <td className="py-2">{formatCurrency(s.price)}</td>
                         <td className="py-2">{formatCurrency(s.cost)}</td>
                         <td className="py-2 text-wine">
@@ -324,6 +329,20 @@ export default function ProductsPage() {
                 <option key={o.value} value={o.value}>{o.label}</option>
               ))}
             </Select>
+          </div>
+          <div>
+            <Label>折合瓶数 *</Label>
+            <QtyInput
+              min={1}
+              value={specForm.bottlesPerUnit}
+              onChange={(n) =>
+                setSpecForm({
+                  ...specForm,
+                  bottlesPerUnit: n || 1,
+                })
+              }
+              placeholder="该规格对应瓶数，如整箱6瓶填6"
+            />
           </div>
           <div>
             <Label>销售价 *</Label>

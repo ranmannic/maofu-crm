@@ -11,6 +11,7 @@ import {
   calcProfitMargin,
   syncPaymentFields,
 } from "@/lib/order-math";
+import { processPaymentWithReconciliation, ensureCreditOrderActive } from "@/lib/credit";
 
 const paymentSchema = z.object({
   paymentStatus: z.enum(["UNPAID", "PARTIAL", "PAID"]),
@@ -34,6 +35,14 @@ const updateSchema = z.object({
   amountAdjustReason: z.string().optional(),
   restore: z.boolean().optional(),
   payment: paymentSchema.optional(),
+  reconcileItems: z
+    .array(
+      z.object({
+        orderItemId: z.string(),
+        quantity: z.number().int().min(0),
+      })
+    )
+    .optional(),
   shipping: shippingSchema.optional(),
 });
 
@@ -53,6 +62,7 @@ export async function GET(
         handler: { select: { id: true, name: true } },
         items: true,
         shipping: true,
+        creditLines: true,
         auditLogs: { orderBy: { createdAt: "desc" } },
       },
     });
@@ -163,25 +173,45 @@ export async function PATCH(
 
     if (body.payment) {
       const total = (body.totalAmount ?? existing.totalAmount) as number;
-      const synced = syncPaymentFields(
-        body.payment.paymentStatus,
-        body.payment.paidAmount,
-        total
-      );
-      orderData.paymentStatus = synced.paymentStatus;
-      orderData.paidAmount = synced.paidAmount;
-      orderData.isPaid = synced.isPaid;
-      orderData.paidAt = body.payment.paidAt
-        ? new Date(body.payment.paidAt)
-        : synced.paidAt;
-      if (synced.paymentStatus === "UNPAID") {
-        orderData.paidAt = null;
+      if (
+        body.payment.paymentStatus !== "UNPAID" &&
+        (!body.reconcileItems || body.reconcileItems.length === 0)
+      ) {
+        return apiError("部分付款或已付款需填写核销产品及数量");
       }
-      changes.payment = {
-        paymentStatus: synced.paymentStatus,
-        paidAmount: synced.paidAmount,
-        isPaid: synced.isPaid,
-      };
+
+      if (body.payment.paymentStatus === "UNPAID") {
+        const synced = syncPaymentFields(
+          body.payment.paymentStatus,
+          body.payment.paidAmount,
+          total
+        );
+        orderData.paymentStatus = synced.paymentStatus;
+        orderData.paidAmount = synced.paidAmount;
+        orderData.isPaid = synced.isPaid;
+        orderData.paidAt = null;
+        orderData.creditStatus =
+          existing.creditStatus === "BAD_DEBT"
+            ? "BAD_DEBT"
+            : existing.isShipped || body.shipping?.isShipped
+              ? "ACTIVE"
+              : null;
+        changes.payment = synced;
+      } else {
+        try {
+          const synced = await processPaymentWithReconciliation(
+            id,
+            body.payment,
+            (body.reconcileItems ?? []).filter((i) => i.quantity > 0),
+            session.id,
+            session.name
+          );
+          changes.payment = { ...synced, reconcileItems: body.reconcileItems };
+        } catch (err) {
+          if (err instanceof Error) return apiError(err.message);
+          throw err;
+        }
+      }
     }
 
     if (body.shipping) {
@@ -227,10 +257,15 @@ export async function PATCH(
           handler: { select: { id: true, name: true } },
           items: true,
           shipping: true,
+          creditLines: true,
           auditLogs: { orderBy: { createdAt: "desc" } },
         },
       });
     });
+
+    if (body.shipping?.isShipped) {
+      await ensureCreditOrderActive(id);
+    }
 
     if (Object.keys(changes).length > 0) {
       await logOrderChange(
@@ -242,32 +277,48 @@ export async function PATCH(
       );
     }
 
+    const finalOrder =
+      body.shipping?.isShipped
+        ? await prisma.order.findUnique({
+            where: { id },
+            include: {
+              customer: true,
+              sales: { select: { id: true, name: true } },
+              handler: { select: { id: true, name: true } },
+              items: true,
+              shipping: true,
+              creditLines: true,
+              auditLogs: { orderBy: { createdAt: "desc" } },
+            },
+          })
+        : order;
+
     const isAdmin = session.role === "ADMIN";
     const profit =
-      order && isAdmin
+      finalOrder && isAdmin
         ? calcOrderProfit(
-            order.totalAmount,
-            order.productCostTotal,
-            order.shippingFee ?? 0,
-            order.otherFee ?? 0
+            finalOrder.totalAmount,
+            finalOrder.productCostTotal,
+            finalOrder.shippingFee ?? 0,
+            finalOrder.otherFee ?? 0
           )
         : undefined;
     const performanceAmount =
-      order &&
+      finalOrder &&
       calcPerformanceAmount(
-        order.totalAmount,
-        order.shippingFee ?? 0,
-        order.otherFee ?? 0
+        finalOrder.totalAmount,
+        finalOrder.shippingFee ?? 0,
+        finalOrder.otherFee ?? 0
       );
 
     return NextResponse.json({
-      ...(order ? enrichOrderForList(order, isAdmin) : {}),
+      ...(finalOrder ? enrichOrderForList(finalOrder, isAdmin) : {}),
       profit,
       profitMargin:
-        order && isAdmin && profit !== undefined && performanceAmount
+        finalOrder && isAdmin && profit !== undefined && performanceAmount
           ? calcProfitMargin(performanceAmount, profit)
           : undefined,
-      auditLogs: order?.auditLogs,
+      auditLogs: finalOrder?.auditLogs,
     });
   } catch (error) {
     if (error instanceof z.ZodError) {

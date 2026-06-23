@@ -153,8 +153,8 @@ async function main() {
       description: "毛府酒庄经典珍藏系列",
       specs: {
         create: [
-          { name: "750ml 单瓶", unitType: "BOTTLE", price: 298, cost: 120 },
-          { name: "750ml 礼盒装", unitType: "SET", price: 688, cost: 280 },
+          { name: "750ml 单瓶", unitType: "BOTTLE", bottlesPerUnit: 1, price: 298, cost: 120 },
+          { name: "750ml 礼盒装", unitType: "SET", bottlesPerUnit: 1, price: 688, cost: 280 },
         ],
       },
     },
@@ -170,8 +170,8 @@ async function main() {
       description: "传统工艺窖藏",
       specs: {
         create: [
-          { name: "500ml", unitType: "BOTTLE", price: 168, cost: 65 },
-          { name: "整箱6瓶", unitType: "BOX", price: 898, cost: 360 },
+          { name: "500ml", unitType: "BOTTLE", bottlesPerUnit: 1, price: 168, cost: 65 },
+          { name: "整箱6瓶", unitType: "BOX", bottlesPerUnit: 6, price: 898, cost: 360 },
         ],
       },
     },
@@ -355,12 +355,79 @@ async function main() {
     },
   });
 
+  // 未付款已发货 — 账期核销演示
+  const productAmount3 = spec1.price * 6;
+  const cost3 = spec1.cost * 6;
+  const shippingFee3 = 60;
+  const calculated3 = productAmount3 + shippingFee3;
+
+  await prisma.order.upsert({
+    where: { orderNo: "MF202506220003" },
+    update: {
+      paymentStatus: "UNPAID",
+      isPaid: false,
+      paidAmount: 0,
+      isShipped: true,
+    },
+    create: {
+      orderNo: "MF202506220003",
+      customerId: customers[2].id,
+      customerName: customers[2].name,
+      salesId: sales2.id,
+      handlerId: ops.id,
+      productAmount: productAmount3,
+      shippingFee: shippingFee3,
+      otherFee: 0,
+      calculatedAmount: calculated3,
+      totalAmount: calculated3,
+      productCostTotal: cost3,
+      paymentStatus: "UNPAID",
+      isPaid: false,
+      paidAmount: 0,
+      isShipped: true,
+      orderedAt: new Date(),
+      notes: "未付款已发货（账期）",
+      items: {
+        create: [
+          {
+            productId: product1.id,
+            productSpecId: spec1.id,
+            productName: product1.name,
+            specName: spec1.name,
+            unitType: spec1.unitType,
+            quantity: 6,
+            unitPrice: spec1.price,
+            unitCost: spec1.cost,
+          },
+        ],
+      },
+      shipping: {
+        create: {
+          carrier: "德邦快递",
+          trackingNo: "DP9876543210",
+          address: customers[2].address,
+          shippedAt: new Date(),
+        },
+      },
+    },
+  });
+
   console.log("Seed completed:");
   console.log(`  Channels: ${Object.keys(channelMap).length} (5 categories + 12 sub-channels)`);
   console.log(`  Customers: ${customers.length} demo records`);
+  console.log("  Credit demo orders:");
+  console.log("    MF202506220002 — 部分付款（账期核销）");
+  console.log("    MF202506220003 — 未付款已发货（账期核销）");
   console.log("  Admin: admin / 123456");
   console.log("  Sales: sales01, sales02 / 123456");
   console.log("  Ops: ops01 / 123456");
+
+  const { syncEligibleCreditOrders } = await import("../src/lib/credit");
+  await prisma.productSpec.updateMany({
+    where: { name: "整箱6瓶" },
+    data: { bottlesPerUnit: 6 },
+  });
+  await syncEligibleCreditOrders();
 }
 
 main()
