@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Plus, Eye, History, Search, Trash2, RotateCcw } from "lucide-react";
+import { Plus, Eye, History, Search, Trash2, RotateCcw, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -83,6 +83,15 @@ interface Product {
 }
 interface OpsUser { id: string; name: string }
 
+function paymentNeedsReconcile(
+  order: Pick<Order, "paymentStatus" | "paidAmount">,
+  newStatus: "UNPAID" | "PARTIAL" | "PAID"
+) {
+  if (newStatus === "PARTIAL") return true;
+  if (newStatus === "PAID" && order.paymentStatus === "PARTIAL") return true;
+  return false;
+}
+
 function getPaymentBadge(order: Order) {
   if (order.paymentStatus === "PAID" || order.isPaid) {
     return { variant: "success" as const, label: "已收" };
@@ -128,7 +137,9 @@ export function OrdersPage({ user }: { user: SessionUser }) {
 
   const [detailOpen, setDetailOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [payModalOpen, setPayModalOpen] = useState(false);
   const [selected, setSelected] = useState<Order | null>(null);
+  const [paymentOrder, setPaymentOrder] = useState<Order | null>(null);
 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -172,6 +183,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
   });
 
   const [error, setError] = useState("");
+  const [paymentError, setPaymentError] = useState("");
   const [saving, setSaving] = useState(false);
 
   const loadOrders = useCallback(async () => {
@@ -279,16 +291,6 @@ export function OrdersPage({ user }: { user: SessionUser }) {
         return;
       }
       setSelected(full);
-      setPaymentForm({
-        paymentStatus: full.paymentStatus || (full.isPaid ? "PAID" : full.paidAmount > 0 ? "PARTIAL" : "UNPAID"),
-        paidAmount: full.paidAmount,
-        paidAt: full.paidAt ? String(full.paidAt).slice(0, 16) : "",
-      });
-      const rq: Record<string, number> = {};
-      (full.items || []).forEach((item: { id: string }) => {
-        rq[item.id] = 0;
-      });
-      setReconcileQty(rq);
       setShippingForm({
         isShipped: full.isShipped,
         carrier: full.shipping?.carrier || "",
@@ -308,6 +310,76 @@ export function OrdersPage({ user }: { user: SessionUser }) {
     } catch {
       alert("无法加载订单详情，请稍后重试");
     }
+  }
+
+  async function openPayment(order: Order) {
+    setPaymentError("");
+    try {
+      const res = await fetch(`/api/orders/${order.id}`);
+      const full = await res.json();
+      if (!res.ok) {
+        alert(full.error || "无法加载订单");
+        return;
+      }
+      setPaymentOrder(full);
+      setPaymentForm({
+        paymentStatus:
+          full.paymentStatus ||
+          (full.isPaid ? "PAID" : full.paidAmount > 0 ? "PARTIAL" : "UNPAID"),
+        paidAmount: full.paidAmount,
+        paidAt: full.paidAt ? String(full.paidAt).slice(0, 16) : "",
+      });
+      const rq: Record<string, number> = {};
+      (full.items || []).forEach((item: { id: string }) => {
+        rq[item.id] = 0;
+      });
+      setReconcileQty(rq);
+      setPayModalOpen(true);
+    } catch {
+      alert("无法加载订单，请稍后重试");
+    }
+  }
+
+  async function handlePaymentSave() {
+    if (!paymentOrder) return;
+    setSaving(true);
+    setPaymentError("");
+
+    const body: Record<string, unknown> = {
+      payment: {
+        ...paymentForm,
+        paidAt: paymentForm.paidAt || undefined,
+      },
+    };
+
+    const needsReconcile = paymentNeedsReconcile(
+      paymentOrder,
+      paymentForm.paymentStatus
+    );
+    if (needsReconcile && paymentForm.paymentStatus !== "UNPAID") {
+      body.reconcileItems = Object.entries(reconcileQty)
+        .filter(([, q]) => q > 0)
+        .map(([orderItemId, quantity]) => ({ orderItemId, quantity }));
+    }
+
+    const res = await fetch(`/api/orders/${paymentOrder.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setPaymentError(data.error || "保存失败");
+      setSaving(false);
+      return;
+    }
+    setPayModalOpen(false);
+    setPaymentOrder(null);
+    if (detailOpen && selected?.id === paymentOrder.id) {
+      setSelected(data);
+    }
+    await loadOrders();
+    setSaving(false);
   }
 
   async function handleCreate() {
@@ -341,12 +413,14 @@ export function OrdersPage({ user }: { user: SessionUser }) {
         ...createPaymentForm,
         paidAt: createPaymentForm.paidAt || undefined,
       };
-      body.reconcileItems = createForm.items
-        .filter((i) => i.productSpecId && (createReconcileQty[i.productSpecId] ?? 0) > 0)
-        .map((i) => ({
-          productSpecId: i.productSpecId,
-          quantity: createReconcileQty[i.productSpecId] ?? 0,
-        }));
+      if (createPaymentForm.paymentStatus === "PARTIAL") {
+        body.reconcileItems = createForm.items
+          .filter((i) => i.productSpecId && (createReconcileQty[i.productSpecId] ?? 0) > 0)
+          .map((i) => ({
+            productSpecId: i.productSpecId,
+            quantity: createReconcileQty[i.productSpecId] ?? 0,
+          }));
+      }
     }
 
     const res = await fetch("/api/orders", {
@@ -371,11 +445,6 @@ export function OrdersPage({ user }: { user: SessionUser }) {
     setError("");
 
     const body: Record<string, unknown> = {};
-    const selectedPaidAt = selected.paidAt ? String(selected.paidAt).slice(0, 16) : "";
-    const paymentChanged =
-      paymentForm.paymentStatus !== selected.paymentStatus ||
-      paymentForm.paidAmount !== selected.paidAmount ||
-      paymentForm.paidAt !== selectedPaidAt;
     const shippingChanged =
       shippingForm.isShipped !== selected.isShipped ||
       shippingForm.carrier !== (selected.shipping?.carrier || "") ||
@@ -387,14 +456,6 @@ export function OrdersPage({ user }: { user: SessionUser }) {
           ? String(selected.shipping.shippedAt).slice(0, 16)
           : "");
 
-    if (canManageOps && paymentChanged) {
-      body.payment = { ...paymentForm, paidAt: paymentForm.paidAt || undefined };
-      if (paymentForm.paymentStatus !== "UNPAID") {
-        body.reconcileItems = Object.entries(reconcileQty)
-          .filter(([, q]) => q > 0)
-          .map(([orderItemId, quantity]) => ({ orderItemId, quantity }));
-      }
-    }
     if (canManageOps && shippingChanged) {
       body.shipping = { ...shippingForm, shippedAt: shippingForm.shippedAt || undefined };
     }
@@ -706,6 +767,11 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                             <button onClick={() => openDetail(o)} className="text-wine hover:underline text-xs inline-flex items-center gap-0.5">
                               <Eye className="h-3 w-3" />详情
                             </button>
+                            {canManageOps && !o.isDeleted && (
+                              <button onClick={() => openPayment(o)} className="text-wine hover:underline text-xs inline-flex items-center gap-0.5">
+                                <Wallet className="h-3 w-3" />设置收款
+                              </button>
+                            )}
                             {canDelete && !o.isDeleted && (
                               <button onClick={() => handleDelete(o)} className="text-red-700 hover:underline text-xs inline-flex items-center gap-0.5">
                                 <Trash2 className="h-3 w-3" />删除
@@ -876,8 +942,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                   }
                 />
               </div>
-              {(createPaymentForm.paymentStatus === "PARTIAL" ||
-                createPaymentForm.paymentStatus === "PAID") && (
+              {(createPaymentForm.paymentStatus === "PARTIAL") && (
                 <div>
                   <Label>核销产品数量 *</Label>
                   <div className="space-y-2 border border-border rounded-sm p-3 mt-1">
@@ -946,6 +1011,16 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                   <div><span className="text-muted">毛利率：</span><span className="text-wine">{selected.profitMargin?.toFixed(1)}%</span></div>
                 </>
               )}
+              <div>
+                <span className="text-muted">收款状态：</span>
+                {getPaymentBadge(selected).label}
+                {selected.paymentStatus === "PARTIAL" && selected.paidAmount > 0
+                  ? ` ${formatCurrency(selected.paidAmount)}`
+                  : ""}
+              </div>
+              {selected.paidAt && (
+                <div><span className="text-muted">收款时间：</span>{formatDate(selected.paidAt)}</div>
+              )}
             </div>
 
             {canManageOps && !selected.isDeleted && (
@@ -965,78 +1040,6 @@ export function OrdersPage({ user }: { user: SessionUser }) {
 
             {canManageOps && !selected.isDeleted && (
               <>
-                <h4 className="font-serif font-medium">收款</h4>
-                <div className="grid grid-cols-2 gap-2">
-                  <Select
-                    value={paymentForm.paymentStatus}
-                    onChange={(e) => {
-                      const status = e.target.value as "UNPAID" | "PARTIAL" | "PAID";
-                      setPaymentForm({
-                        ...paymentForm,
-                        paymentStatus: status,
-                        paidAmount:
-                          status === "PAID"
-                            ? editTotalAmount
-                            : status === "UNPAID"
-                              ? 0
-                              : paymentForm.paidAmount,
-                      });
-                    }}
-                  >
-                    <option value="UNPAID">未收款</option>
-                    <option value="PARTIAL">部分付款</option>
-                    <option value="PAID">已收款</option>
-                  </Select>
-                  <Input
-                    type="number"
-                    min={0}
-                    step={0.01}
-                    value={paymentForm.paidAmount}
-                    disabled={paymentForm.paymentStatus !== "PARTIAL"}
-                    onChange={(e) =>
-                      setPaymentForm({
-                        ...paymentForm,
-                        paidAmount: parseFloat(e.target.value) || 0,
-                      })
-                    }
-                    placeholder="部分付款金额"
-                  />
-                  <Input type="datetime-local" className="col-span-2" value={paymentForm.paidAt} onChange={(e) => setPaymentForm({ ...paymentForm, paidAt: e.target.value })} />
-                </div>
-                {(paymentForm.paymentStatus === "PARTIAL" ||
-                  paymentForm.paymentStatus === "PAID") && (
-                  <div>
-                    <Label>核销产品数量 *</Label>
-                    <div className="space-y-2 border border-border rounded-sm p-3 mt-1">
-                      {(selected.items ?? []).map((item) => {
-                        const line = selected.creditLines?.find(
-                          (l) => l.orderItemId === item.id
-                        );
-                        const maxQty = line?.unreconciledQty ?? item.quantity;
-                        return (
-                          <div key={item.id} className="flex items-center gap-2 text-sm">
-                            <span className="flex-1">
-                              {item.productName} · {item.specName}（可核销 {maxQty}
-                              {SPEC_UNIT_LABELS[item.unitType]}）
-                            </span>
-                            <QtyInput
-                              min={0}
-                              max={maxQty}
-                              className="w-24"
-                              value={reconcileQty[item.id] ?? 0}
-                              onChange={(n) =>
-                                setReconcileQty({
-                                  ...reconcileQty,
-                                  [item.id]: n,
-                                })
-                              }
-                            />
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
                 <h4 className="font-serif font-medium">发货</h4>
                 <div className="grid grid-cols-2 gap-2">
                   <Select value={shippingForm.isShipped ? "1" : "0"} onChange={(e) => setShippingForm({ ...shippingForm, isShipped: e.target.value === "1" })}>
@@ -1159,6 +1162,127 @@ export function OrdersPage({ user }: { user: SessionUser }) {
           {canManageOps && !selected?.isDeleted && (
             <Button onClick={handleUpdateOps} disabled={saving}>{saving ? "保存中..." : "保存"}</Button>
           )}
+        </ModalFooter>
+      </Modal>
+
+      <Modal
+        open={payModalOpen}
+        onClose={() => setPayModalOpen(false)}
+        title={`设置收款 · ${paymentOrder?.orderNo || ""}`}
+        className="max-w-2xl"
+      >
+        {paymentOrder && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <div><span className="text-muted">客户：</span>{paymentOrder.customerName}</div>
+              <div><span className="text-muted">订单总额：</span>{formatCurrency(paymentOrder.totalAmount)}</div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label>付款状态</Label>
+                <Select
+                  value={paymentForm.paymentStatus}
+                  onChange={(e) => {
+                    const status = e.target.value as "UNPAID" | "PARTIAL" | "PAID";
+                    setPaymentForm({
+                      ...paymentForm,
+                      paymentStatus: status,
+                      paidAmount:
+                        status === "PAID"
+                          ? paymentOrder.totalAmount
+                          : status === "UNPAID"
+                            ? 0
+                            : paymentForm.paidAmount,
+                    });
+                  }}
+                >
+                  <option value="UNPAID">未收款</option>
+                  <option value="PARTIAL">部分付款</option>
+                  <option value="PAID">已收款</option>
+                </Select>
+              </div>
+              <div>
+                <Label>已收金额</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  value={paymentForm.paidAmount}
+                  disabled={paymentForm.paymentStatus !== "PARTIAL"}
+                  onChange={(e) =>
+                    setPaymentForm({
+                      ...paymentForm,
+                      paidAmount: parseFloat(e.target.value) || 0,
+                    })
+                  }
+                />
+              </div>
+              {paymentForm.paymentStatus !== "UNPAID" && (
+                <div className="col-span-2">
+                  <Label>收款时间</Label>
+                  <Input
+                    type="datetime-local"
+                    value={paymentForm.paidAt}
+                    onChange={(e) =>
+                      setPaymentForm({ ...paymentForm, paidAt: e.target.value })
+                    }
+                  />
+                </div>
+              )}
+            </div>
+            {paymentNeedsReconcile(paymentOrder, paymentForm.paymentStatus) &&
+              paymentForm.paymentStatus !== "UNPAID" && (
+                <div>
+                  <Label>核销产品数量 *</Label>
+                  <p className="text-xs text-muted mb-2">
+                    部分付款或账期补款结清需填写本次核销数量
+                  </p>
+                  <div className="space-y-2 border border-border rounded-sm p-3">
+                    {(paymentOrder.items ?? []).map((item) => {
+                      const line = paymentOrder.creditLines?.find(
+                        (l) => l.orderItemId === item.id
+                      );
+                      const maxQty = line?.unreconciledQty ?? item.quantity;
+                      return (
+                        <div key={item.id} className="flex items-center gap-2 text-sm">
+                          <span className="flex-1">
+                            {item.productName} · {item.specName}（可核销 {maxQty}
+                            {SPEC_UNIT_LABELS[item.unitType]}）
+                          </span>
+                          <QtyInput
+                            min={0}
+                            max={maxQty}
+                            className="w-24"
+                            value={reconcileQty[item.id] ?? 0}
+                            onChange={(n) =>
+                              setReconcileQty({
+                                ...reconcileQty,
+                                [item.id]: n,
+                              })
+                            }
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            {paymentForm.paymentStatus === "PAID" &&
+              !paymentNeedsReconcile(paymentOrder, "PAID") && (
+                <p className="text-xs text-muted bg-paper border border-border rounded-sm p-3">
+                  一次性全额收款，无需填写核销产品数量。
+                </p>
+              )}
+            {paymentError && <p className="text-sm text-red-700">{paymentError}</p>}
+          </div>
+        )}
+        <ModalFooter>
+          <Button variant="secondary" onClick={() => setPayModalOpen(false)}>
+            取消
+          </Button>
+          <Button onClick={handlePaymentSave} disabled={saving}>
+            {saving ? "保存中..." : "确认收款"}
+          </Button>
         </ModalFooter>
       </Modal>
     </div>

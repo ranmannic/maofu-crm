@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { toBottleCount, resolveBottlesPerUnit } from "@/lib/unit-convert";
-import { syncPaymentFields } from "@/lib/order-math";
+import { syncPaymentFields, calcPerformanceAmount } from "@/lib/order-math";
 import {
   calcReconcilePerformanceAmount,
   recordCollectPerformance,
@@ -46,6 +46,21 @@ export function shouldActivateCredit(order: {
   if (order.paymentStatus === "PARTIAL") return true;
   if (order.paymentStatus === "UNPAID" && order.isShipped) return true;
   return false;
+}
+
+/** 本次收款是否需要填写核销产品数量（账期订单部分付款/补款结清） */
+export function requiresPaymentReconciliation(
+  order: {
+    paymentStatus: PaymentStatus;
+    creditStatus?: CreditOrderStatus | null;
+    paidAmount: number;
+  },
+  newPaymentStatus: PaymentStatus
+): boolean {
+  if (newPaymentStatus === "UNPAID") return false;
+  if (newPaymentStatus === "PARTIAL") return true;
+  if (order.paymentStatus !== "PARTIAL" && order.paidAmount <= 0) return false;
+  return true;
 }
 
 /** 同步所有符合条件的订单到账期核销（补全历史数据） */
@@ -404,12 +419,15 @@ export async function processPaymentWithReconciliation(
     order.totalAmount
   );
 
-  if (synced.paymentStatus === "PARTIAL" || synced.paymentStatus === "PAID") {
-    if (reconcileItems.length === 0 && synced.paymentStatus === "PAID") {
-      throw new Error("结清付款需填写核销产品及数量");
-    }
-    if (reconcileItems.length === 0 && synced.paymentStatus === "PARTIAL") {
-      throw new Error("部分付款需填写核销产品及数量");
+  const needsReconcile = requiresPaymentReconciliation(order, synced.paymentStatus);
+
+  if (needsReconcile) {
+    if (reconcileItems.length === 0) {
+      throw new Error(
+        synced.paymentStatus === "PAID"
+          ? "账期订单结清需填写核销产品及数量"
+          : "部分付款需填写核销产品及数量"
+      );
     }
   }
 
@@ -427,7 +445,7 @@ export async function processPaymentWithReconciliation(
     });
   }
 
-  if (reconcileItems.length > 0) {
+  if (needsReconcile && reconcileItems.length > 0) {
     await applyReconciliation(orderId, reconcileItems);
   }
 
@@ -435,10 +453,26 @@ export async function processPaymentWithReconciliation(
     ? new Date(payment.paidAt)
     : synced.paidAt;
 
-  const performanceAmount =
-    reconcileItems.length > 0
-      ? calcReconcilePerformanceAmount(order.items, reconcileItems)
-      : 0;
+  const shippingFee = order.shippingFee ?? 0;
+  const otherFee = order.otherFee ?? 0;
+  const maxProductPerf = calcPerformanceAmount(
+    order.totalAmount,
+    shippingFee,
+    otherFee
+  );
+
+  let performanceAmount = 0;
+  if (needsReconcile && reconcileItems.length > 0) {
+    performanceAmount = calcReconcilePerformanceAmount(order.items, reconcileItems);
+  } else if (synced.paymentStatus === "PAID" && synced.paidAmount > 0) {
+    performanceAmount = maxProductPerf;
+  } else if (synced.paymentStatus === "PARTIAL" && synced.paidAmount > 0) {
+    const ratio =
+      order.totalAmount > 0
+        ? Math.min(1, synced.paidAmount / order.totalAmount)
+        : 0;
+    performanceAmount = maxProductPerf * ratio;
+  }
 
   let creditStatus: CreditOrderStatus | null = order.creditStatus;
   if (synced.paymentStatus === "PAID") {
@@ -500,6 +534,18 @@ export async function processPaymentWithReconciliation(
           detail: JSON.stringify(reconcileItems),
         });
       }
+    } else if (
+      performanceAmount > 0 &&
+      synced.paymentStatus !== "UNPAID" &&
+      paidAt
+    ) {
+      await recordCollectPerformance(tx, {
+        orderId,
+        salesId: order.salesId,
+        amount: performanceAmount,
+        eventAt: paidAt,
+        detail: JSON.stringify({ directPayment: true }),
+      });
     }
   });
 

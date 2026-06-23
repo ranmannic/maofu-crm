@@ -11,7 +11,7 @@ import {
   calcProfitMargin,
   syncPaymentFields,
 } from "@/lib/order-math";
-import { processPaymentWithReconciliation, ensureCreditOrderActive } from "@/lib/credit";
+import { processPaymentWithReconciliation, ensureCreditOrderActive, requiresPaymentReconciliation } from "@/lib/credit";
 import {
   calcRefundPerformanceAmount,
   recordRefundPerformance,
@@ -187,11 +187,20 @@ export async function PATCH(
 
     if (body.payment) {
       const total = (body.totalAmount ?? existing.totalAmount) as number;
+      const needsReconcile = requiresPaymentReconciliation(
+        existing,
+        body.payment.paymentStatus
+      );
       if (
-        body.payment.paymentStatus !== "UNPAID" &&
-        (!body.reconcileItems || body.reconcileItems.length === 0)
+        needsReconcile &&
+        (!body.reconcileItems ||
+          body.reconcileItems.filter((i) => i.quantity > 0).length === 0)
       ) {
-        return apiError("部分付款或已付款需填写核销产品及数量");
+        return apiError(
+          body.payment.paymentStatus === "PAID"
+            ? "账期订单结清需填写核销产品及数量"
+            : "部分付款需填写核销产品及数量"
+        );
       }
 
       if (body.payment.paymentStatus === "UNPAID") {
