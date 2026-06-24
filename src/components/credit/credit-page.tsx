@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Search, AlertTriangle, Wallet, CheckCircle2 } from "lucide-react";
+import { Search, AlertTriangle, Wallet, CheckCircle2, Paperclip } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -9,6 +9,8 @@ import { Modal, ModalFooter } from "@/components/ui/modal";
 import { Input, Label, Select, Textarea, QtyInput } from "@/components/ui/input";
 import { FilterField } from "@/components/ui/filter-field";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { calcReconcilePaidAmount } from "@/lib/reconcile-ui";
+import { OrderVouchersPanel } from "@/components/orders/order-vouchers-panel";
 import type { SessionUser } from "@/lib/auth-types";
 
 interface CreditItem {
@@ -120,6 +122,8 @@ export function CreditPage({ user }: { user: SessionUser }) {
   const [settledOrderCount, setSettledOrderCount] = useState(0);
 
   const [payModalOpen, setPayModalOpen] = useState(false);
+  const [voucherModalOpen, setVoucherModalOpen] = useState(false);
+  const [voucherOrder, setVoucherOrder] = useState<CreditOrder | null>(null);
   const [badDebtModalOpen, setBadDebtModalOpen] = useState(false);
   const [reconcileHistoryOpen, setReconcileHistoryOpen] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<CreditOrder | null>(null);
@@ -179,25 +183,21 @@ export function CreditPage({ user }: { user: SessionUser }) {
     setReconcileHistoryOpen(true);
   }
 
-  function calcReconcilePaidAmount(
-    order: CreditOrder,
-    qtyMap: Record<string, number>
-  ) {
-    const sessionAmount = order.items.reduce((sum, item) => {
-      const qty = qtyMap[item.id] ?? 0;
-      if (qty <= 0 || item.isGift) return sum;
-      return sum + item.unitPrice * qty;
-    }, 0);
-    return order.paidAmount + sessionAmount;
-  }
-
   function updateReconcileQty(order: CreditOrder, itemId: string, quantity: number) {
     const nextQty = { ...reconcileQty, [itemId]: quantity };
     setReconcileQty(nextQty);
     if (paymentForm.paymentStatus === "PARTIAL") {
       setPaymentForm((prev) => ({
         ...prev,
-        paidAmount: calcReconcilePaidAmount(order, nextQty),
+        paidAmount: calcReconcilePaidAmount(
+          order.items.map((i) => ({
+            id: i.id,
+            unitPrice: i.unitPrice,
+            isGift: i.isGift,
+          })),
+          order.paidAmount,
+          nextQty
+        ),
       }));
     }
   }
@@ -566,6 +566,17 @@ export function CreditPage({ user }: { user: SessionUser }) {
                                 查看核销记录
                               </Button>
                             )}
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => {
+                                setVoucherOrder(o);
+                                setVoucherModalOpen(true);
+                              }}
+                            >
+                              <Paperclip className="h-3 w-3 mr-1" />
+                              凭证
+                            </Button>
                             {canEdit && !isSettledView && o.creditStatus !== "BAD_DEBT" && (
                               <>
                                 <Button size="sm" onClick={() => openPayment(o)}>
@@ -623,7 +634,15 @@ export function CreditPage({ user }: { user: SessionUser }) {
                       paidAmount:
                         status === "UNPAID"
                           ? 0
-                          : calcReconcilePaidAmount(selectedOrder, reconcileQty),
+                          : calcReconcilePaidAmount(
+                              selectedOrder.items.map((i) => ({
+                                id: i.id,
+                                unitPrice: i.unitPrice,
+                                isGift: i.isGift,
+                              })),
+                              selectedOrder.paidAmount,
+                              reconcileQty
+                            ),
                     });
                   }}
                 >
@@ -694,6 +713,11 @@ export function CreditPage({ user }: { user: SessionUser }) {
               </div>
             </div>
             {error && <p className="text-sm text-red-700">{error}</p>}
+            <OrderVouchersPanel
+              orderId={selectedOrder.id}
+              canEdit={canEdit}
+              compact
+            />
           </div>
         )}
         <ModalFooter>
@@ -702,6 +726,23 @@ export function CreditPage({ user }: { user: SessionUser }) {
           </Button>
           <Button onClick={handlePaymentSave} disabled={saving}>
             {saving ? "保存中..." : "确认核销"}
+          </Button>
+        </ModalFooter>
+      </Modal>
+
+      <Modal
+        open={voucherModalOpen}
+        onClose={() => setVoucherModalOpen(false)}
+        title={`订单凭证 · ${voucherOrder?.orderNo || ""}`}
+        className="max-w-2xl"
+      >
+        <OrderVouchersPanel
+          orderId={voucherOrder?.id ?? null}
+          canEdit={canEdit}
+        />
+        <ModalFooter>
+          <Button variant="secondary" onClick={() => setVoucherModalOpen(false)}>
+            关闭
           </Button>
         </ModalFooter>
       </Modal>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Plus, Eye, History, Search, Trash2, RotateCcw, Wallet } from "lucide-react";
+import { Plus, Eye, History, Search, Trash2, RotateCcw, Wallet, Truck, Paperclip } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -9,8 +9,11 @@ import { Modal, ModalFooter } from "@/components/ui/modal";
 import { Input, Label, Select, Textarea, QtyInput } from "@/components/ui/input";
 import { Pagination } from "@/components/ui/pagination";
 import { FilterField } from "@/components/ui/filter-field";
-import { DEFAULT_PAGE_SIZE, SPEC_UNIT_LABELS } from "@/lib/constants";
+import { DEFAULT_PAGE_SIZE, SPEC_UNIT_LABELS, SHIPPING_METHOD_OPTIONS, SHIPPING_METHOD_LABELS } from "@/lib/constants";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { formatShippingAddress } from "@/lib/address-parse";
+import { calcReconcilePaidAmount, calcCreateReconcilePaidAmount } from "@/lib/reconcile-ui";
+import { OrderVouchersPanel } from "@/components/orders/order-vouchers-panel";
 import type { SessionUser } from "@/lib/auth-types";
 import type { SpecUnit } from "@/generated/prisma/client";
 
@@ -57,6 +60,12 @@ interface Order {
     isGift?: boolean;
   }[];
   shipping: {
+    method?: "PICKUP" | "SELF_DELIVERY" | "EXPRESS" | "LOGISTICS" | null;
+    recipientName?: string | null;
+    recipientPhone?: string | null;
+    province?: string | null;
+    city?: string | null;
+    county?: string | null;
     carrier: string | null;
     trackingNo: string | null;
     address: string | null;
@@ -77,6 +86,17 @@ interface Order {
 }
 
 interface Customer { id: string; name: string }
+
+interface CustomerShippingAddress {
+  id: string;
+  name: string;
+  phone: string;
+  province: string | null;
+  city: string | null;
+  county: string | null;
+  address: string;
+  isDefault: boolean;
+}
 interface Product {
   id: string;
   name: string;
@@ -139,8 +159,12 @@ export function OrdersPage({ user }: { user: SessionUser }) {
   const [detailOpen, setDetailOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [payModalOpen, setPayModalOpen] = useState(false);
+  const [shipModalOpen, setShipModalOpen] = useState(false);
+  const [voucherModalOpen, setVoucherModalOpen] = useState(false);
   const [selected, setSelected] = useState<Order | null>(null);
   const [paymentOrder, setPaymentOrder] = useState<Order | null>(null);
+  const [shippingOrder, setShippingOrder] = useState<Order | null>(null);
+  const [voucherOrder, setVoucherOrder] = useState<Order | null>(null);
 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -154,8 +178,11 @@ export function OrdersPage({ user }: { user: SessionUser }) {
     otherFee: 0,
     totalAmount: 0,
     amountAdjustReason: "",
+    shippingMethod: "PICKUP" as "PICKUP" | "SELF_DELIVERY" | "EXPRESS" | "LOGISTICS",
+    shippingAddressId: "",
     items: [{ productSpecId: "", quantity: 1, isGift: false }],
   });
+  const [customerAddresses, setCustomerAddresses] = useState<CustomerShippingAddress[]>([]);
   const [productAmountPreview, setProductAmountPreview] = useState(0);
   const [calculatedPreview, setCalculatedPreview] = useState(0);
 
@@ -185,6 +212,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
 
   const [error, setError] = useState("");
   const [paymentError, setPaymentError] = useState("");
+  const [shippingError, setShippingError] = useState("");
   const [saving, setSaving] = useState(false);
 
   const loadOrders = useCallback(async () => {
@@ -255,6 +283,32 @@ export function OrdersPage({ user }: { user: SessionUser }) {
     }
   }, [createForm.items, createForm.shippingFee, createForm.otherFee, products, createOpen]);
 
+  async function loadCustomerAddresses(customerId: string) {
+    if (!customerId) {
+      setCustomerAddresses([]);
+      return;
+    }
+    const res = await fetch(`/api/customers/${customerId}/shipping-addresses`);
+    if (res.ok) {
+      const addrs: CustomerShippingAddress[] = await res.json();
+      setCustomerAddresses(addrs);
+      const defaultAddr = addrs.find((a) => a.isDefault) ?? addrs[0];
+      setCreateForm((f) => ({
+        ...f,
+        shippingAddressId: defaultAddr?.id || "",
+      }));
+    } else {
+      setCustomerAddresses([]);
+      setCreateForm((f) => ({ ...f, shippingAddressId: "" }));
+    }
+  }
+
+  useEffect(() => {
+    if (createOpen && createForm.customerId) {
+      loadCustomerAddresses(createForm.customerId);
+    }
+  }, [createOpen, createForm.customerId]);
+
   async function loadCreateData() {
     const [cRes, pRes, uRes] = await Promise.all([
       fetch("/api/customers?pageSize=100"),
@@ -274,8 +328,11 @@ export function OrdersPage({ user }: { user: SessionUser }) {
       customerId: "", handlerId: "", notes: "",
       shippingFee: 0, otherFee: 0,
       totalAmount: 0, amountAdjustReason: "",
+      shippingMethod: "PICKUP",
+      shippingAddressId: "",
       items: [{ productSpecId: "", quantity: 1, isGift: false }],
     });
+    setCustomerAddresses([]);
     setCreatePaymentForm({ paymentStatus: "UNPAID", paidAmount: 0, paidAt: "" });
     setCreateReconcileQty({});
     setError("");
@@ -293,14 +350,6 @@ export function OrdersPage({ user }: { user: SessionUser }) {
         return;
       }
       setSelected(full);
-      setShippingForm({
-        isShipped: full.isShipped,
-        carrier: full.shipping?.carrier || "",
-        trackingNo: full.shipping?.trackingNo || "",
-        address: full.shipping?.address || "",
-        shippedAt: full.shipping?.shippedAt ? String(full.shipping.shippedAt).slice(0, 16) : "",
-        notes: full.shipping?.notes || "",
-      });
       setEditTotalAmount(full.totalAmount);
       setEditAmountReason("");
       setRefundForm({
@@ -312,6 +361,102 @@ export function OrdersPage({ user }: { user: SessionUser }) {
     } catch {
       alert("无法加载订单详情，请稍后重试");
     }
+  }
+
+  function fillShippingForm(full: Order) {
+    setShippingForm({
+      isShipped: full.isShipped,
+      carrier: full.shipping?.carrier || "",
+      trackingNo: full.shipping?.trackingNo || "",
+      address: full.shipping?.address || "",
+      shippedAt: full.shipping?.shippedAt ? String(full.shipping.shippedAt).slice(0, 16) : "",
+      notes: full.shipping?.notes || "",
+    });
+  }
+
+  async function openShipping(order: Order) {
+    setShippingError("");
+    try {
+      const res = await fetch(`/api/orders/${order.id}`);
+      const full = await res.json();
+      if (!res.ok) {
+        alert(full.error || "无法加载订单");
+        return;
+      }
+      setShippingOrder(full);
+      fillShippingForm(full);
+      setShipModalOpen(true);
+    } catch {
+      alert("无法加载订单，请稍后重试");
+    }
+  }
+
+  function openVouchers(order: Order) {
+    setVoucherOrder(order);
+    setVoucherModalOpen(true);
+  }
+
+  function updatePaymentReconcileQty(orderItemId: string, quantity: number) {
+    if (!paymentOrder) return;
+    const nextQty = { ...reconcileQty, [orderItemId]: quantity };
+    setReconcileQty(nextQty);
+    if (paymentForm.paymentStatus === "PARTIAL") {
+      setPaymentForm((prev) => ({
+        ...prev,
+        paidAmount: calcReconcilePaidAmount(
+          paymentOrder.items,
+          paymentOrder.paidAmount,
+          nextQty
+        ),
+      }));
+    }
+  }
+
+  function updateCreateReconcileQty(productSpecId: string, quantity: number) {
+    const nextQty = { ...createReconcileQty, [productSpecId]: quantity };
+    setCreateReconcileQty(nextQty);
+    if (createPaymentForm.paymentStatus === "PARTIAL") {
+      const specPrices = new Map(
+        getAllSpecs().map((s) => [s.id, s.price])
+      );
+      setCreatePaymentForm((prev) => ({
+        ...prev,
+        paidAmount: calcCreateReconcilePaidAmount(
+          createForm.items.filter((i) => i.productSpecId),
+          specPrices,
+          nextQty
+        ),
+      }));
+    }
+  }
+
+  async function handleShippingSave() {
+    if (!shippingOrder) return;
+    setSaving(true);
+    setShippingError("");
+    const res = await fetch(`/api/orders/${shippingOrder.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        shipping: {
+          ...shippingForm,
+          shippedAt: shippingForm.shippedAt || undefined,
+        },
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setShippingError(data.error || "保存失败");
+      setSaving(false);
+      return;
+    }
+    setShipModalOpen(false);
+    setShippingOrder(null);
+    if (detailOpen && selected?.id === shippingOrder.id) {
+      setSelected(data);
+    }
+    await loadOrders();
+    setSaving(false);
   }
 
   async function openPayment(order: Order) {
@@ -393,6 +538,16 @@ export function OrdersPage({ user }: { user: SessionUser }) {
   async function handleCreate() {
     setSaving(true);
     setError("");
+
+    if (
+      createForm.shippingMethod !== "PICKUP" &&
+      !createForm.shippingAddressId
+    ) {
+      setError("请选择客户收货地址，或先在客户管理中维护收货信息");
+      setSaving(false);
+      return;
+    }
+
     const specs = getAllSpecs();
     const items = createForm.items
       .filter((i) => i.productSpecId)
@@ -409,6 +564,13 @@ export function OrdersPage({ user }: { user: SessionUser }) {
       notes: createForm.notes || undefined,
       shippingFee: createForm.shippingFee || 0,
       otherFee: createForm.otherFee || 0,
+      delivery: {
+        method: createForm.shippingMethod,
+        addressId:
+          createForm.shippingMethod !== "PICKUP"
+            ? createForm.shippingAddressId
+            : undefined,
+      },
       items,
     };
 
@@ -454,20 +616,6 @@ export function OrdersPage({ user }: { user: SessionUser }) {
     setError("");
 
     const body: Record<string, unknown> = {};
-    const shippingChanged =
-      shippingForm.isShipped !== selected.isShipped ||
-      shippingForm.carrier !== (selected.shipping?.carrier || "") ||
-      shippingForm.trackingNo !== (selected.shipping?.trackingNo || "") ||
-      shippingForm.address !== (selected.shipping?.address || "") ||
-      shippingForm.notes !== (selected.shipping?.notes || "") ||
-      shippingForm.shippedAt !==
-        (selected.shipping?.shippedAt
-          ? String(selected.shipping.shippedAt).slice(0, 16)
-          : "");
-
-    if (canManageOps && shippingChanged) {
-      body.shipping = { ...shippingForm, shippedAt: shippingForm.shippedAt || undefined };
-    }
     const selectedRefundedAt = selected.refundedAt
       ? String(selected.refundedAt).slice(0, 16)
       : "";
@@ -777,8 +925,18 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                               <Eye className="h-3 w-3" />详情
                             </button>
                             {canManageOps && !o.isDeleted && (
+                              <button onClick={() => openShipping(o)} className="text-wine hover:underline text-xs inline-flex items-center gap-0.5">
+                                <Truck className="h-3 w-3" />设置发货
+                              </button>
+                            )}
+                            {canManageOps && !o.isDeleted && (
                               <button onClick={() => openPayment(o)} className="text-wine hover:underline text-xs inline-flex items-center gap-0.5">
                                 <Wallet className="h-3 w-3" />设置收款
+                              </button>
+                            )}
+                            {!o.isDeleted && (
+                              <button onClick={() => openVouchers(o)} className="text-muted hover:text-wine text-xs inline-flex items-center gap-0.5">
+                                <Paperclip className="h-3 w-3" />凭证
                               </button>
                             )}
                             {canDelete && !o.isDeleted && (
@@ -809,13 +967,75 @@ export function OrdersPage({ user }: { user: SessionUser }) {
         <div className="space-y-4">
           <div>
             <Label>客户 *</Label>
-            <Select value={createForm.customerId} onChange={(e) => setCreateForm({ ...createForm, customerId: e.target.value })}>
+            <Select
+              value={createForm.customerId}
+              onChange={(e) =>
+                setCreateForm({
+                  ...createForm,
+                  customerId: e.target.value,
+                  shippingAddressId: "",
+                })
+              }
+            >
               <option value="">请选择</option>
               {(Array.isArray(customers) ? customers : []).map((c) => (
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </Select>
           </div>
+          <div>
+            <Label>发货方式 *</Label>
+            <Select
+              value={createForm.shippingMethod}
+              onChange={(e) =>
+                setCreateForm({
+                  ...createForm,
+                  shippingMethod: e.target.value as typeof createForm.shippingMethod,
+                })
+              }
+            >
+              {SHIPPING_METHOD_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </Select>
+          </div>
+          {createForm.shippingMethod !== "PICKUP" && (
+            <div>
+              <Label>收货地址 *</Label>
+              {createForm.customerId ? (
+                customerAddresses.length > 0 ? (
+                  <>
+                    <Select
+                      value={createForm.shippingAddressId}
+                      onChange={(e) =>
+                        setCreateForm({
+                          ...createForm,
+                          shippingAddressId: e.target.value,
+                        })
+                      }
+                    >
+                      <option value="">请选择收货地址</option>
+                      {customerAddresses.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.isDefault ? "【默认】" : ""}
+                          {a.name} {a.phone} — {formatShippingAddress(a)}
+                        </option>
+                      ))}
+                    </Select>
+                    <p className="text-xs text-muted mt-1">
+                      默认地址已自动选中；可在客户列表「收货信息」中维护
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-sm p-2">
+                    该客户暂无收货地址，请先在客户列表中为该客户添加收货信息
+                  </p>
+                )
+              ) : (
+                <p className="text-sm text-muted">请先选择客户</p>
+              )}
+            </div>
+          )}
           <div>
             <Label>订单处理人员</Label>
             <Select value={createForm.handlerId} onChange={(e) => setCreateForm({ ...createForm, handlerId: e.target.value })}>
@@ -932,7 +1152,11 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                           ? createForm.totalAmount
                           : status === "UNPAID"
                             ? 0
-                            : createPaymentForm.paidAmount,
+                            : calcCreateReconcilePaidAmount(
+                                createForm.items.filter((i) => i.productSpecId),
+                                new Map(getAllSpecs().map((s) => [s.id, s.price])),
+                                createReconcileQty
+                              ),
                     });
                   }}
                 >
@@ -954,6 +1178,11 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                   }
                   placeholder="部分付款金额"
                 />
+                {createPaymentForm.paymentStatus === "PARTIAL" && (
+                  <p className="text-xs text-muted col-span-2">
+                    根据本次核销数量自动计算已收金额
+                  </p>
+                )}
                 <Input
                   type="datetime-local"
                   className="col-span-2"
@@ -988,12 +1217,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                               max={item.quantity}
                               className="w-24"
                               value={createReconcileQty[item.productSpecId] ?? 0}
-                              onChange={(n) =>
-                                setCreateReconcileQty({
-                                  ...createReconcileQty,
-                                  [item.productSpecId]: n,
-                                })
-                              }
+                              onChange={(n) => updateCreateReconcileQty(item.productSpecId, n)}
                             />
                           </div>
                         );
@@ -1104,18 +1328,64 @@ export function OrdersPage({ user }: { user: SessionUser }) {
               </div>
             )}
 
+            {(canManageOps || selected.shipping?.method || selected.isShipped) && (
+              <>
+                <h4 className="font-serif font-medium">发货信息</h4>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  {selected.shipping?.method && (
+                    <div>
+                      <span className="text-muted">发货方式：</span>
+                      {SHIPPING_METHOD_LABELS[selected.shipping.method]}
+                    </div>
+                  )}
+                  <div>
+                    <span className="text-muted">发货状态：</span>
+                    {selected.isShipped ? "已发货" : "未发货"}
+                  </div>
+                  {selected.shipping?.recipientName && (
+                    <div>
+                      <span className="text-muted">收货人：</span>
+                      {selected.shipping.recipientName}
+                      {selected.shipping.recipientPhone
+                        ? ` ${selected.shipping.recipientPhone}`
+                        : ""}
+                    </div>
+                  )}
+                  {selected.shipping?.address && (
+                    <div className="col-span-2">
+                      <span className="text-muted">收货地址：</span>
+                      {selected.shipping.address}
+                    </div>
+                  )}
+                  {selected.shipping?.carrier && (
+                    <div>
+                      <span className="text-muted">快递公司：</span>
+                      {selected.shipping.carrier}
+                    </div>
+                  )}
+                  {selected.shipping?.trackingNo && (
+                    <div>
+                      <span className="text-muted">运单号：</span>
+                      {selected.shipping.trackingNo}
+                    </div>
+                  )}
+                  {selected.shipping?.shippedAt && (
+                    <div>
+                      <span className="text-muted">发货时间：</span>
+                      {formatDate(selected.shipping.shippedAt)}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+
+            <OrderVouchersPanel
+              orderId={selected.id}
+              canEdit={canManageOps && !selected.isDeleted}
+            />
+
             {canManageOps && !selected.isDeleted && (
               <>
-                <h4 className="font-serif font-medium">发货</h4>
-                <div className="grid grid-cols-2 gap-2">
-                  <Select value={shippingForm.isShipped ? "1" : "0"} onChange={(e) => setShippingForm({ ...shippingForm, isShipped: e.target.value === "1" })}>
-                    <option value="0">未发货</option>
-                    <option value="1">已发货</option>
-                  </Select>
-                  <Input placeholder="快递公司" value={shippingForm.carrier} onChange={(e) => setShippingForm({ ...shippingForm, carrier: e.target.value })} />
-                  <Input placeholder="运单号" value={shippingForm.trackingNo} onChange={(e) => setShippingForm({ ...shippingForm, trackingNo: e.target.value })} />
-                  <Input type="datetime-local" value={shippingForm.shippedAt} onChange={(e) => setShippingForm({ ...shippingForm, shippedAt: e.target.value })} />
-                </div>
                 <h4 className="font-serif font-medium">退款</h4>
                 <div className="grid grid-cols-2 gap-2">
                   <Select
@@ -1162,39 +1432,6 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                         setRefundForm({ ...refundForm, refundedAt: e.target.value })
                       }
                     />
-                  )}
-                </div>
-              </>
-            )}
-
-            {!canManageOps && (
-              <>
-                <h4 className="font-serif font-medium">发货信息</h4>
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  <div>
-                    <span className="text-muted">发货状态：</span>
-                    {selected.isShipped ? "已发货" : "未发货"}
-                  </div>
-                  {selected.shipping?.carrier && (
-                    <div>
-                      <span className="text-muted">快递公司：</span>
-                      {selected.shipping.carrier}
-                    </div>
-                  )}
-                  {selected.shipping?.trackingNo && (
-                    <div className="col-span-2">
-                      <span className="text-muted">运单号：</span>
-                      {selected.shipping.trackingNo}
-                    </div>
-                  )}
-                  {selected.shipping?.shippedAt && (
-                    <div>
-                      <span className="text-muted">发货时间：</span>
-                      {formatDate(selected.shipping.shippedAt)}
-                    </div>
-                  )}
-                  {!selected.isShipped && !selected.shipping?.trackingNo && (
-                    <div className="col-span-2 text-muted">暂无发货信息</div>
                   )}
                 </div>
               </>
@@ -1258,7 +1495,11 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                           ? paymentOrder.totalAmount
                           : status === "UNPAID"
                             ? 0
-                            : paymentForm.paidAmount,
+                            : calcReconcilePaidAmount(
+                                paymentOrder.items,
+                                paymentOrder.paidAmount,
+                                reconcileQty
+                              ),
                     });
                   }}
                 >
@@ -1282,6 +1523,12 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                     })
                   }
                 />
+                {paymentForm.paymentStatus === "PARTIAL" && (
+                  <p className="text-xs text-muted mt-1">
+                    根据本次核销数量自动累加（含历史已收{" "}
+                    {formatCurrency(paymentOrder.paidAmount)}）
+                  </p>
+                )}
               </div>
               {paymentForm.paymentStatus !== "UNPAID" && (
                 <div className="col-span-2">
@@ -1327,12 +1574,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                             className="w-24"
                             disabled={maxQty <= 0}
                             value={reconcileQty[item.id] ?? 0}
-                            onChange={(n) =>
-                              setReconcileQty({
-                                ...reconcileQty,
-                                [item.id]: n,
-                              })
-                            }
+                            onChange={(n) => updatePaymentReconcileQty(item.id, n)}
                           />
                           <span className="text-xs text-muted w-8">
                             {SPEC_UNIT_LABELS[item.unitType]}
@@ -1350,6 +1592,11 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                 </p>
               )}
             {paymentError && <p className="text-sm text-red-700">{paymentError}</p>}
+            <OrderVouchersPanel
+              orderId={paymentOrder.id}
+              canEdit={canManageOps}
+              compact
+            />
           </div>
         )}
         <ModalFooter>
@@ -1358,6 +1605,124 @@ export function OrdersPage({ user }: { user: SessionUser }) {
           </Button>
           <Button onClick={handlePaymentSave} disabled={saving}>
             {saving ? "保存中..." : "确认收款"}
+          </Button>
+        </ModalFooter>
+      </Modal>
+
+      <Modal
+        open={shipModalOpen}
+        onClose={() => setShipModalOpen(false)}
+        title={`设置发货 · ${shippingOrder?.orderNo || ""}`}
+        className="max-w-2xl"
+      >
+        {shippingOrder && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <div><span className="text-muted">客户：</span>{shippingOrder.customerName}</div>
+              <div>
+                <span className="text-muted">发货方式：</span>
+                {shippingOrder.shipping?.method
+                  ? SHIPPING_METHOD_LABELS[shippingOrder.shipping.method]
+                  : "—"}
+              </div>
+            </div>
+            {shippingOrder.shipping?.method &&
+              shippingOrder.shipping.method !== "PICKUP" &&
+              shippingOrder.shipping.address && (
+                <div className="text-sm p-3 bg-paper border border-border rounded-sm space-y-1">
+                  <div>
+                    <span className="text-muted">收货人：</span>
+                    {shippingOrder.shipping.recipientName}
+                    {shippingOrder.shipping.recipientPhone
+                      ? ` ${shippingOrder.shipping.recipientPhone}`
+                      : ""}
+                  </div>
+                  <div>
+                    <span className="text-muted">收货地址：</span>
+                    {shippingOrder.shipping.address}
+                  </div>
+                </div>
+              )}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label>发货状态</Label>
+                <Select
+                  value={shippingForm.isShipped ? "1" : "0"}
+                  onChange={(e) =>
+                    setShippingForm({ ...shippingForm, isShipped: e.target.value === "1" })
+                  }
+                >
+                  <option value="0">未发货</option>
+                  <option value="1">已发货</option>
+                </Select>
+              </div>
+              <div>
+                <Label>发货时间</Label>
+                <Input
+                  type="datetime-local"
+                  value={shippingForm.shippedAt}
+                  onChange={(e) =>
+                    setShippingForm({ ...shippingForm, shippedAt: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <Label>快递公司</Label>
+                <Input
+                  placeholder="快递公司"
+                  value={shippingForm.carrier}
+                  onChange={(e) =>
+                    setShippingForm({ ...shippingForm, carrier: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <Label>运单号</Label>
+                <Input
+                  placeholder="运单号"
+                  value={shippingForm.trackingNo}
+                  onChange={(e) =>
+                    setShippingForm({ ...shippingForm, trackingNo: e.target.value })
+                  }
+                />
+              </div>
+              <div className="col-span-2">
+                <Label>备注</Label>
+                <Textarea
+                  value={shippingForm.notes}
+                  onChange={(e) =>
+                    setShippingForm({ ...shippingForm, notes: e.target.value })
+                  }
+                  rows={2}
+                />
+              </div>
+            </div>
+            {shippingError && <p className="text-sm text-red-700">{shippingError}</p>}
+          </div>
+        )}
+        <ModalFooter>
+          <Button variant="secondary" onClick={() => setShipModalOpen(false)}>
+            取消
+          </Button>
+          <Button onClick={handleShippingSave} disabled={saving}>
+            {saving ? "保存中..." : "确认发货"}
+          </Button>
+        </ModalFooter>
+      </Modal>
+
+      <Modal
+        open={voucherModalOpen}
+        onClose={() => setVoucherModalOpen(false)}
+        title={`订单凭证 · ${voucherOrder?.orderNo || ""}`}
+        className="max-w-2xl"
+      >
+        <OrderVouchersPanel
+          orderId={voucherOrder?.id ?? null}
+          canEdit={canManageOps}
+        />
+        <ModalFooter>
+          <Button variant="secondary" onClick={() => setVoucherModalOpen(false)}>
+            关闭
           </Button>
         </ModalFooter>
       </Modal>

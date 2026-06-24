@@ -9,10 +9,13 @@ function resolveDbPath() {
   return path.isAbsolute(dbPath) ? dbPath : path.join(process.cwd(), dbPath);
 }
 
-function getSchemaVersion() {
+function getClientVersion() {
   try {
-    const stat = fs.statSync(path.join(process.cwd(), "prisma/schema.prisma"));
-    return String(stat.mtimeMs);
+    const schemaStat = fs.statSync(path.join(process.cwd(), "prisma/schema.prisma"));
+    const clientStat = fs.statSync(
+      path.join(process.cwd(), "src/generated/prisma/internal/class.ts")
+    );
+    return `${schemaStat.mtimeMs}-${clientStat.mtimeMs}`;
   } catch {
     return "0";
   }
@@ -28,12 +31,12 @@ const globalForPrisma = globalThis as unknown as {
   prismaSchemaVersion?: string;
 };
 
-const schemaVersion = getSchemaVersion();
+const clientVersion = getClientVersion();
 
 if (
   process.env.NODE_ENV !== "production" &&
   globalForPrisma.prisma &&
-  globalForPrisma.prismaSchemaVersion !== schemaVersion
+  globalForPrisma.prismaSchemaVersion !== clientVersion
 ) {
   void globalForPrisma.prisma.$disconnect();
   globalForPrisma.prisma = undefined;
@@ -43,5 +46,5 @@ export const prisma = globalForPrisma.prisma ?? createPrismaClient();
 
 if (process.env.NODE_ENV !== "production") {
   globalForPrisma.prisma = prisma;
-  globalForPrisma.prismaSchemaVersion = schemaVersion;
+  globalForPrisma.prismaSchemaVersion = clientVersion;
 }

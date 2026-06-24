@@ -24,9 +24,11 @@ import {
   SEGMENT_LABELS,
   CHURN_LABELS,
   REMINDER_LABELS,
+  BIRTHDAY_REMINDER_LABELS,
   type ChurnLevel,
   type CustomerSegment,
   type ReminderStatus,
+  type BirthdayReminderStatus,
 } from "@/lib/follow-up";
 
 const HISTORY_PAGE_SIZE = 10;
@@ -49,6 +51,8 @@ interface FollowUpRow {
   segment: CustomerSegment;
   churnLevel: ChurnLevel | null;
   reminderStatus: ReminderStatus;
+  birthday: string | null;
+  birthdayReminderStatus: BirthdayReminderStatus;
   latestFollowUp: {
     id: string;
     followedAt: string;
@@ -88,6 +92,9 @@ interface CustomerProfile {
   channelName: string | null;
   address: string | null;
   followUpNotes: string | null;
+  birthday: string | null;
+  birthdayDisplay?: string;
+  birthdayReminderStatus?: BirthdayReminderStatus;
   sales: { id: string; name: string };
   customerStatus: "LEAD" | "CLOSED";
   followUpStatus: "ACTIVE" | "ABANDONED";
@@ -125,8 +132,15 @@ function nowDatetimeLocal(): string {
   return toDatetimeLocal(new Date());
 }
 
-function rowHighlight(reminder: ReminderStatus, abandoned: boolean): string {
+function rowHighlight(
+  reminder: ReminderStatus,
+  abandoned: boolean,
+  birthdayReminder: BirthdayReminderStatus = "NONE"
+): string {
   if (abandoned) return "opacity-70";
+  if (birthdayReminder !== "NONE") {
+    return "bg-pink-50/90 ring-1 ring-inset ring-pink-300";
+  }
   if (reminder === "OVERDUE") return "bg-red-50/80 ring-1 ring-inset ring-red-200";
   if (reminder === "DUE_SOON") return "bg-amber-50/80 ring-1 ring-inset ring-amber-200";
   return "";
@@ -165,7 +179,9 @@ export function FollowUpPage({ user }: { user: SessionUser }) {
   const [profile, setProfile] = useState<CustomerProfile | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [notesForm, setNotesForm] = useState("");
+  const [birthdayForm, setBirthdayForm] = useState("");
   const [notesSaving, setNotesSaving] = useState(false);
+  const [birthdaySaving, setBirthdaySaving] = useState(false);
   const [records, setRecords] = useState<FollowUpRecord[]>([]);
   const [recordsPage, setRecordsPage] = useState(1);
   const [recordsTotal, setRecordsTotal] = useState(0);
@@ -227,6 +243,7 @@ export function FollowUpPage({ user }: { user: SessionUser }) {
       const data: CustomerProfile = await res.json();
       setProfile(data);
       setNotesForm(data.followUpNotes ?? "");
+      setBirthdayForm(data.birthday ?? "");
     }
     setProfileLoading(false);
   }
@@ -263,6 +280,8 @@ export function FollowUpPage({ user }: { user: SessionUser }) {
   function openProfileModal(row: FollowUpRow) {
     setProfileId(row.id);
     setProfile(null);
+    setNotesForm("");
+    setBirthdayForm("");
     setRecords([]);
     setRecordsPage(1);
     setError("");
@@ -332,6 +351,27 @@ export function FollowUpPage({ user }: { user: SessionUser }) {
     }
     setProfile(data);
     setNotesSaving(false);
+  }
+
+  async function handleSaveBirthday() {
+    if (!profileId) return;
+    setBirthdaySaving(true);
+    setError("");
+    const res = await fetch(`/api/follow-up/${profileId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ birthday: birthdayForm || null }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setError(data.error || "保存失败");
+      setBirthdaySaving(false);
+      return;
+    }
+    setProfile(data);
+    setBirthdayForm(data.birthday ?? "");
+    await load();
+    setBirthdaySaving(false);
   }
 
   async function handleAbandon() {
@@ -532,7 +572,8 @@ export function FollowUpPage({ user }: { user: SessionUser }) {
                           "border-b border-border/40",
                           rowHighlight(
                             row.reminderStatus,
-                            row.followUpStatus === "ABANDONED"
+                            row.followUpStatus === "ABANDONED",
+                            row.birthdayReminderStatus
                           )
                         )}
                       >
@@ -541,10 +582,25 @@ export function FollowUpPage({ user }: { user: SessionUser }) {
                             <button
                               type="button"
                               onClick={() => openProfileModal(row)}
-                              className="text-wine hover:underline text-left"
+                              className={cn(
+                                "hover:underline text-left",
+                                row.birthdayReminderStatus !== "NONE" &&
+                                  row.followUpStatus === "ACTIVE"
+                                  ? "text-pink-700 font-semibold"
+                                  : "text-wine"
+                              )}
                             >
                               {row.name}
                             </button>
+                            {row.birthdayReminderStatus !== "NONE" &&
+                              row.followUpStatus === "ACTIVE" && (
+                                <Badge
+                                  variant="wine"
+                                  className="animate-pulse bg-pink-100 text-pink-800 border-pink-300"
+                                >
+                                  🎂 {BIRTHDAY_REMINDER_LABELS[row.birthdayReminderStatus]}
+                                </Badge>
+                              )}
                             {row.reminderStatus !== "NONE" &&
                               row.followUpStatus === "ACTIVE" && (
                                 <Badge
@@ -794,6 +850,35 @@ export function FollowUpPage({ user }: { user: SessionUser }) {
                   <div>{profile.address}</div>
                 </div>
               )}
+            </div>
+
+            <div>
+              <Label>客户生日</Label>
+              <div className="flex flex-wrap items-center gap-2 mt-1">
+                <Input
+                  type="date"
+                  value={birthdayForm}
+                  onChange={(e) => setBirthdayForm(e.target.value)}
+                  className="max-w-[200px]"
+                />
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={handleSaveBirthday}
+                  disabled={birthdaySaving}
+                >
+                  {birthdaySaving ? "保存中..." : "保存生日"}
+                </Button>
+                {profile.birthdayReminderStatus &&
+                  profile.birthdayReminderStatus !== "NONE" && (
+                    <Badge className="bg-pink-100 text-pink-800 border-pink-300">
+                      🎂 {BIRTHDAY_REMINDER_LABELS[profile.birthdayReminderStatus]}
+                    </Badge>
+                  )}
+              </div>
+              <p className="text-xs text-muted mt-1">
+                设置后将在生日前 7 天至生日后 3 天在列表中醒目提醒
+              </p>
             </div>
 
             <div>

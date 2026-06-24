@@ -10,6 +10,7 @@ import {
   getChurnLevel,
   getCustomerSegment,
   getReminderStatus,
+  getBirthdayReminderStatus,
   formatSinceLastOrder,
   canAbandonCustomer,
   type CustomerSegment,
@@ -86,6 +87,8 @@ function mapCustomerRow(
     segment: customerSegment,
     churnLevel,
     reminderStatus,
+    birthday: c.birthday,
+    birthdayReminderStatus: getBirthdayReminderStatus(c.birthday),
     latestFollowUp: latest
       ? {
           id: latest.id,

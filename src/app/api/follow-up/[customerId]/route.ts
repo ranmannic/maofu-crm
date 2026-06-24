@@ -10,7 +10,9 @@ import {
   getChurnLevel,
   getCustomerSegment,
   getReminderStatus,
+  getBirthdayReminderStatus,
   formatSinceLastOrder,
+  formatBirthdayDisplay,
   canAbandonCustomer,
 } from "@/lib/follow-up";
 
@@ -70,6 +72,7 @@ function mapProfile(
     channelName: serialized.channelName,
     address: customer.address,
     followUpNotes: customer.followUpNotes,
+    birthday: customer.birthday,
     sales: customer.sales,
     customerStatus: customer.customerStatus,
     followUpStatus: customer.followUpStatus,
@@ -85,6 +88,8 @@ function mapProfile(
         ? getChurnLevel(lastOrderAt)
         : null,
     reminderStatus: getReminderStatus(latest?.nextFollowUpAt),
+    birthdayReminderStatus: getBirthdayReminderStatus(customer.birthday),
+    birthdayDisplay: formatBirthdayDisplay(customer.birthday),
     canAbandon:
       customer.followUpStatus === "ACTIVE" && canAbandonCustomer(segment),
   };
@@ -114,6 +119,11 @@ const recordSchema = z.object({
 
 const patchSchema = z.object({
   followUpNotes: z.string().optional(),
+  birthday: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "生日格式应为 YYYY-MM-DD")
+    .nullable()
+    .optional(),
 });
 
 export async function PATCH(
@@ -127,9 +137,17 @@ export async function PATCH(
     if (!customer) return apiError("客户不存在", 404);
 
     const body = patchSchema.parse(await request.json());
+    const data: { followUpNotes?: string | null; birthday?: string | null } = {};
+    if (body.followUpNotes !== undefined) {
+      data.followUpNotes = body.followUpNotes ?? null;
+    }
+    if (body.birthday !== undefined) {
+      data.birthday = body.birthday;
+    }
+
     const updated = await prisma.customer.update({
       where: { id: customerId },
-      data: { followUpNotes: body.followUpNotes ?? null },
+      data,
       include: {
         sales: { select: { id: true, name: true } },
         channel: {

@@ -41,6 +41,9 @@ yarn-error.log*
 *.db-journal
 !prisma/init.db
 
+# uploaded voucher files
+/data/uploads/
+
 # local node runtime (dev only)
 .node/
 

@@ -75,3 +75,63 @@ export const REMINDER_LABELS: Record<ReminderStatus, string> = {
   DUE_SOON: "待跟进",
   OVERDUE: "逾期未跟进",
 };
+
+export type BirthdayReminderStatus = "NONE" | "UPCOMING" | "TODAY" | "RECENT";
+
+function startOfDay(d: Date) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+function parseBirthday(value: string | null | undefined): { month: number; day: number } | null {
+  if (!value?.trim()) return null;
+  const m = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  return { month, day };
+}
+
+/** 生日前 7 天至生日后 3 天内提醒 */
+export function getBirthdayReminderStatus(
+  birthday: string | null | undefined
+): BirthdayReminderStatus {
+  const parts = parseBirthday(birthday);
+  if (!parts) return "NONE";
+
+  const today = startOfDay(new Date());
+  const year = today.getFullYear();
+
+  for (const y of [year - 1, year, year + 1]) {
+    const bday = startOfDay(new Date(y, parts.month - 1, parts.day));
+    const windowStart = new Date(bday);
+    windowStart.setDate(windowStart.getDate() - 7);
+    const windowEnd = new Date(bday);
+    windowEnd.setDate(windowEnd.getDate() + 3);
+
+    if (today >= windowStart && today <= windowEnd) {
+      if (today.getTime() === bday.getTime()) return "TODAY";
+      if (today < bday) return "UPCOMING";
+      return "RECENT";
+    }
+  }
+
+  return "NONE";
+}
+
+export function formatBirthdayDisplay(birthday: string | null | undefined) {
+  const parts = parseBirthday(birthday);
+  if (!parts) return "—";
+  return `${parts.month} 月 ${parts.day} 日`;
+}
+
+export const BIRTHDAY_REMINDER_LABELS: Record<
+  Exclude<BirthdayReminderStatus, "NONE">,
+  string
+> = {
+  UPCOMING: "生日临近",
+  TODAY: "今天生日",
+  RECENT: "生日关怀",
+};

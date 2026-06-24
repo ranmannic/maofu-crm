@@ -14,6 +14,7 @@ import { parsePagination, paginatedResponse } from "@/lib/pagination";
 import { enrichOrderForList } from "@/lib/serializers";
 import { logOrderChange } from "@/lib/order-audit";
 import { processPaymentWithReconciliation, requiresPaymentReconciliation } from "@/lib/credit";
+import { formatShippingAddress } from "@/lib/address-parse";
 import type { Prisma } from "@/generated/prisma/client";
 
 const orderItemSchema = z.object({
@@ -23,9 +24,15 @@ const orderItemSchema = z.object({
   isGift: z.boolean().optional(),
 });
 
+const deliverySchema = z.object({
+  method: z.enum(["PICKUP", "SELF_DELIVERY", "EXPRESS", "LOGISTICS"]),
+  addressId: z.string().optional(),
+});
+
 const createOrderSchema = z.object({
   customerId: z.string(),
   items: z.array(orderItemSchema).min(1, "至少添加一个产品"),
+  delivery: deliverySchema,
   shippingFee: z.number().min(0).optional(),
   otherFee: z.number().min(0).optional(),
   totalAmount: z.number().min(0).optional(),
@@ -207,6 +214,32 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    if (body.delivery.method !== "PICKUP" && !body.delivery.addressId) {
+      return apiError("请选择客户收货地址");
+    }
+
+    let shippingCreate: Prisma.ShippingInfoCreateNestedOneWithoutOrderInput | undefined;
+    if (body.delivery.method === "PICKUP") {
+      shippingCreate = { create: { method: "PICKUP" } };
+    } else {
+      const addr = await prisma.customerShippingAddress.findFirst({
+        where: { id: body.delivery.addressId!, customerId: customer.id },
+      });
+      if (!addr) return apiError("收货地址不存在");
+      shippingCreate = {
+        create: {
+          method: body.delivery.method,
+          recipientName: addr.name,
+          recipientPhone: addr.phone,
+          province: addr.province,
+          city: addr.city,
+          county: addr.county,
+          address: formatShippingAddress(addr),
+          customerAddressId: addr.id,
+        },
+      };
+    }
+
     const order = await prisma.order.create({
       data: {
         orderNo: generateOrderNo(),
@@ -224,6 +257,7 @@ export async function POST(request: NextRequest) {
         productCostTotal,
         notes: body.notes,
         items: { create: orderItems },
+        shipping: shippingCreate,
       },
       include: {
         items: true,

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Plus, Pencil, Trash2, RotateCcw, ArrowRightLeft, Search } from "lucide-react";
+import { Plus, Pencil, Trash2, RotateCcw, ArrowRightLeft, Search, MapPin } from "lucide-react";
 import { FilterField } from "@/components/ui/filter-field";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -12,6 +12,7 @@ import { Pagination } from "@/components/ui/pagination";
 import { DEFAULT_PAGE_SIZE } from "@/lib/constants";
 import { formatDate } from "@/lib/utils";
 import type { SessionUser } from "@/lib/auth-types";
+import { CustomerShippingAddressModal } from "@/components/customers/customer-shipping-address-modal";
 
 interface Channel {
   id: string;
@@ -68,6 +69,7 @@ export function CustomersPage({ user }: { user: SessionUser }) {
     customerStatus: "LEAD" as "LEAD" | "CLOSED",
   });
   const [transferSalesId, setTransferSalesId] = useState("");
+  const [shippingCustomer, setShippingCustomer] = useState<Customer | null>(null);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -319,6 +321,12 @@ export function CustomersPage({ user }: { user: SessionUser }) {
                               <button onClick={() => openEdit(c)} className="text-wine hover:underline text-xs inline-flex items-center gap-0.5">
                                 <Pencil className="h-3 w-3" />编辑
                               </button>
+                              <button
+                                onClick={() => setShippingCustomer(c)}
+                                className="text-wine hover:underline text-xs inline-flex items-center gap-0.5"
+                              >
+                                <MapPin className="h-3 w-3" />收货信息
+                              </button>
                               <button onClick={() => handleDelete(c)} className="text-red-700 hover:underline text-xs inline-flex items-center gap-0.5">
                                 <Trash2 className="h-3 w-3" />删除
                               </button>
@@ -428,6 +436,12 @@ export function CustomersPage({ user }: { user: SessionUser }) {
           <Button onClick={handleTransfer} disabled={saving || !transferSalesId}>确认转移</Button>
         </ModalFooter>
       </Modal>
+
+      <CustomerShippingAddressModal
+        open={!!shippingCustomer}
+        customer={shippingCustomer}
+        onClose={() => setShippingCustomer(null)}
+      />
     </div>
   );
 }

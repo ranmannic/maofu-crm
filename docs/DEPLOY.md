@@ -149,9 +149,20 @@ HTTPS 推荐使用 certbot 或阿里云证书服务。
 
 容器启动时 `entrypoint.sh` 会：
 
-1. 若数据卷为空且 `INIT_DB=true` → 从 `prisma/init.db` 复制内置业务快照
-2. 执行 `npx prisma migrate deploy` 同步表结构
+1. 若数据卷为空且 `INIT_DB=true` → 从 `prisma/init.db` 复制内置业务快照（含当前演示环境的全部业务数据）
+2. 执行 `npx prisma migrate deploy` 同步表结构（若快照 schema 略旧，会自动补齐 migration）
 3. 若 `RUN_SYNC=true` → 执行业绩与客户状态回填
+
+**维护初始化快照**（开发机有最新演示数据时，发布前执行）：
+
+```bash
+# 确保本地 dev.db 已 migrate 且数据完整
+npx prisma migrate deploy
+npm run db:export-init   # 将 dev.db 复制为 prisma/init.db
+git add prisma/init.db
+```
+
+> `prisma/init.db` 仅含 SQLite 业务数据，**不含** `data/uploads/` 下的凭证图片/PDF 文件。新环境首次部署后凭证需重新上传，或另行备份 uploads 目录。
 
 **首次部署完成后**，请将 `.env` 中改为：
 
@@ -172,7 +183,7 @@ INIT_DB=false
 | 变量 | 必填 | 说明 |
 |------|------|------|
 | `JWT_SECRET` | 是 | 会话签名密钥，至少 32 位随机字符串 |
-| `INIT_DB` | 首次 | `true` 时空数据卷从 `prisma/init.db` 初始化；之后必须为 `false` |
+| `INIT_DB` | 首次 | `true` 时空数据卷从 `prisma/init.db` 初始化（含演示客户、订单、跟进、收货地址等）；之后必须为 `false` |
 | `RUN_SYNC` | 否 | `true` 时每次启动执行业绩/客户状态回填（升级时可临时开启） |
 | `APP_PORT` | 否 | 宿主机映射端口，默认 `3000` |
 | `NGINX_HTTP_PORT` | 否 | Nginx profile 对外端口，默认 `80` |
@@ -259,7 +270,8 @@ curl -I http://127.0.0.1:3000/login
 - [ ] 镜像重建成功、`docker compose ps` 显示 healthy
 - [ ] v0.3+ 升级：已执行 `sync-performance`
 - [ ] v0.5+ 升级：已执行 `sync-customer-status`
-- [ ] 抽查：首页统计、订单、账期核销、**客户跟进**
+- [ ] v0.6+ 升级：确认收货地址、订单凭证、客户生日等新表已 migrate（entrypoint 自动执行）
+- [ ] 抽查：首页统计、订单、账期核销、客户跟进、**收货信息**、**订单凭证**、**客户生日提醒**
 
 ### 6.1 临时开启启动时自动回填
 
@@ -291,8 +303,9 @@ curl -I http://127.0.0.1:3000/login
 | v0.3+ | 业绩按收款时间、退款 | `sync-performance` |
 | v0.4+ | 订单赠品、账期已结清 | 通常仅需 migrate |
 | v0.5+ | 客户跟进、线索/成交状态 | `sync-customer-status` + `sync-performance`（若首页无数据） |
+| v0.6+ | 客户收货地址、订单发货方式、订单凭证、客户生日 | 通常仅需 migrate；凭证文件存于 `data/uploads/`（不随 init.db 打包） |
 
-详细字段说明见历史版本记录；当前仓库版本 **v0.5.0**。
+详细字段说明见历史版本记录；当前仓库版本 **v0.6.0**。
 
 ### 7.4 生产允许 / 禁止的命令
 
@@ -458,6 +471,8 @@ docker compose exec app ls -la /data/
     └── backup-docker-db.sh
 
 Docker Volume: maofu-crm-data → /data/prod.db
+
+凭证文件（若已上传）位于容器内 `/app/data/uploads/orders/`，**未**纳入 `init.db`。生产环境建议将 `data/uploads` 挂载为独立卷或定期备份。
 ```
 
 ---
@@ -472,7 +487,17 @@ Docker Volume: maofu-crm-data → /data/prod.db
 
 **上线后务必修改全部默认密码。**
 
-`INIT_DB=true` 首次启动后，内置数据含 6 位客户、2 笔订单、跟进记录及业绩样例。
+`INIT_DB=true` 首次启动后，内置 `prisma/init.db` 快照（v0.6.0）含：
+
+| 内容 | 说明 |
+|------|------|
+| 账号 | admin、liuyc（管理员），sales01/02（销售），ops01（职能），初始密码均为 `123456` |
+| 客户 | 演示客户及渠道、跟进记录、部分客户生日 |
+| 订单 | 含赠品、发货方式、收货地址快照、账期核销样例 |
+| 收货地址 | 客户收货信息（`CustomerShippingAddress`） |
+| 业绩 / 账期 | 历史收款、核销、业绩记录 |
+
+凭证截图/PDF 需上线后自行上传（不在 init.db 中）。
 
 ---
 
