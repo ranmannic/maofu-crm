@@ -1,3 +1,4 @@
+import { markCustomerClosedOnPayment } from "@/lib/customer-status";
 import { prisma } from "@/lib/prisma";
 import { toBottleCount, resolveBottlesPerUnit } from "@/lib/unit-convert";
 import { syncPaymentFields, calcPerformanceAmount } from "@/lib/order-math";
@@ -549,6 +550,12 @@ export async function processPaymentWithReconciliation(
         eventAt: paidAt,
         detail: JSON.stringify({ directPayment: true }),
       });
+    }
+    if (
+      (synced.paymentStatus === "PAID" || synced.paymentStatus === "PARTIAL") &&
+      synced.paidAmount > 0
+    ) {
+      await markCustomerClosedOnPayment(order.customerId, tx);
     }
   });
 

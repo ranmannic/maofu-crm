@@ -39,6 +39,7 @@ yarn-error.log*
 # database
 *.db
 *.db-journal
+!prisma/init.db
 
 # local node runtime (dev only)
 .node/

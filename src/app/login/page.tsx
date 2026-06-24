@@ -30,7 +30,7 @@ export default function LoginPage() {
         setError(data.error || "登录失败");
         return;
       }
-      sessionStorage.removeItem(ADMIN_DASHBOARD_DATA_VISIBLE_KEY);
+      sessionStorage.setItem(ADMIN_DASHBOARD_DATA_VISIBLE_KEY, "true");
       router.push("/");
       router.refresh();
     } catch {

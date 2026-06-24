@@ -10,6 +10,7 @@ const updateSchema = z.object({
   channelId: z.string().nullable().optional(),
   address: z.string().optional(),
   salesId: z.string().optional(),
+  customerStatus: z.enum(["LEAD", "CLOSED"]).optional(),
   restore: z.boolean().optional(),
 });
 
@@ -59,8 +60,8 @@ export async function PATCH(
       if (existing.salesId !== session.id || existing.deletedAt) {
         return apiError("无权限", 403);
       }
-      if (body.salesId || body.restore) {
-        return apiError("销售无法转移或恢复客户", 403);
+      if (body.salesId || body.restore || body.customerStatus) {
+        return apiError("销售无法转移、恢复或修改客户状态", 403);
       }
     }
 
@@ -74,6 +75,9 @@ export async function PATCH(
     }
     if (session.role === "ADMIN" && body.restore) {
       data.deletedAt = null;
+    }
+    if (session.role === "ADMIN" && body.customerStatus) {
+      data.customerStatus = body.customerStatus;
     }
 
     const customer = await prisma.customer.update({

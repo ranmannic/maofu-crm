@@ -129,15 +129,33 @@ npm run build   # 含 prisma generate + next build
 
 ### 3.6 初始化数据库（仅首次）
 
-```bash
-# 同步表结构到空库
-npx prisma db push
+**推荐：使用仓库内置初始化数据**（含当前业务样例：客户、订单、跟进记录、业绩等）
 
-# 写入演示账号与渠道数据（仅首次、空库时执行）
-npm run db:seed
+```bash
+# 1. 确保表结构与 migration 一致（空库或新库）
+npx prisma migrate deploy
+
+# 2. 从 prisma/init.db 复制完整初始化数据
+npm run db:init
+
+# 3. 重新生成 Client 并确认业绩记录完整（init.db 已含大部分数据，此步可补漏）
+npx prisma generate
+npm run db:sync-performance
+npm run db:sync-customer-status
 ```
 
-> ⚠️ **生产环境切勿再次执行 `npm run db:seed` 或 `npm run db:reset`**，否则会覆盖或清空业务数据。详见 [第 7 节](#7-生产数据保护与迁移策略)。
+> `prisma/init.db` 为随代码提交的 SQLite 快照，**仅用于首次部署空库**。生产环境已有业务数据时**切勿**执行 `npm run db:init`，否则会覆盖全部数据。
+
+**备选：仅写入演示账号与最小样例**（无完整业务数据时）
+
+```bash
+npx prisma db push
+npm run db:seed
+npm run db:sync-performance
+npm run db:sync-customer-status
+```
+
+> ⚠️ **生产环境切勿再次执行 `npm run db:init` / `npm run db:seed` / `npm run db:reset`**，否则会覆盖或清空业务数据。详见 [第 7 节](#7-生产数据保护与迁移策略)。
 
 ### 3.7 使用 PM2 启动
 
@@ -244,8 +262,9 @@ npm run build
 # ── 第 6 步：重启服务 ──
 pm2 restart maofu-crm
 
-# ── 第 7 步：业绩数据初始化（含 PerformanceRecord 的版本升级后执行）──
+# ── 第 7 步：业绩与客户状态回填（含 PerformanceRecord / 成交客户的版本升级后执行）──
 npm run db:sync-performance
+npm run db:sync-customer-status
 
 # ── 第 8 步：验证 ──
 curl -I http://127.0.0.1:3000/login
@@ -261,7 +280,8 @@ pm2 logs maofu-crm --lines 50
 - [ ] 已执行 `npx prisma migrate deploy`（或 `db push`）+ `npx prisma generate`
 - [ ] 构建成功、PM2 运行正常
 - [ ] 若升级含业绩/退款模块：已执行 `npm run db:sync-performance`
-- [ ] 登录并抽查：客户列表、订单列表、首页统计明细（业绩总额/未收款/已收款）、账期核销页（待核销 + 已结清）
+- [ ] 若升级含客户跟进模块（v0.5+）：已执行 `npm run db:sync-customer-status`
+- [ ] 登录并抽查：客户列表、订单列表、首页统计明细（业绩总额/未收款/已收款）、账期核销页（待核销 + 已结清）、**客户跟进**页
 
 ### 6.1 两种更新路径
 
@@ -277,6 +297,7 @@ npx prisma generate
 npm run build
 pm2 restart maofu-crm
 npm run db:sync-performance   # 回填历史业绩/核销业绩，首页统计依赖此步骤
+npm run db:sync-customer-status   # 将有收款订单的客户标记为成交客户
 ```
 
 > 若 `migrate deploy` 报 migration 冲突，**不要**强行 reset；改用 `db push` 或联系维护人员处理。
@@ -303,8 +324,9 @@ npx prisma generate
 npm run build
 pm2 restart maofu-crm
 
-# 4. 初始化/回填业务数据（不修改账号、客户、产品、渠道）
+# 4. 初始化/回填业务数据（不修改账号、客户、产品、渠道本体）
 npm run db:sync-performance
+npm run db:sync-customer-status
 
 # 5. 验证
 curl -I http://127.0.0.1:3000/login
@@ -315,7 +337,10 @@ curl -I http://127.0.0.1:3000/login
 | 命令 | 作用 | 是否覆盖业务主数据 |
 |------|------|-------------------|
 | `db:sync-performance` | 从核销记录/已收款订单回填 `PerformanceRecord`、补全核销业绩字段 | 否，仅补业绩记录 |
-| `db:seed` | 写入演示账号与样例数据 | ⚠️ 会 upsert 演示配置，生产禁用 |
+| `db:sync-customer-status` | 将有 PAID/PARTIAL 收款订单的客户设为「成交客户」 | 否，仅更新 `customerStatus` |
+| `db:init` | 从 `prisma/init.db` 覆盖目标库为内置初始化快照 | ⚠️ **会覆盖全部数据**，仅空库首次部署 |
+| `db:export-init` | 将当前库导出为 `prisma/init.db`（维护人员更新初始化包时用） | 开发侧操作 |
+| `db:seed` | 写入最小演示账号与样例数据 | ⚠️ 会 upsert 演示配置，生产禁用 |
 | `db:clear-orders` | 清空全部订单及账期库存 | 仅保留账号/客户/产品/渠道，生产慎用 |
 
 > **重要**：`schema` 变更后必须 `prisma generate` + **重启 PM2**，否则首页/账期页可能出现 500（Prisma Client 与数据库不一致）。
@@ -440,6 +465,42 @@ npm run db:sync-performance    # 若从旧版升级且首页业绩异常
 3. 账期核销页切换「已结清」，可按客户/订单号查询历史结清记录
 4. 核销付款弹窗显示规格单价，填写核销数量后已收金额自动更新
 
+#### 客户跟进管理（v0.5+）
+
+新增：
+
+- `Customer.followUpStatus` / `abandonedAt` / `abandonReason`：跟进中 / 已放弃
+- `Customer.customerStatus`：`LEAD`（线索）/ `CLOSED`（成交）；收款后自动成交
+- `Customer.followUpNotes`：客户描述备注
+- `CustomerFollowUpRecord`：跟进记录（时间、内容、下次计划、下次跟进时间）
+- 侧边栏「客户跟进」（管理员、销售）；管理员默认勾选「只显示成交客户」
+- Migration：
+  - `20260624140000_customer_follow_up`
+  - `20260624150000_customer_status`
+  - `20260624160000_customer_follow_up_notes`
+
+**生产升级步骤（在 migrate deploy 之后）：**
+
+```bash
+npx prisma migrate deploy
+npx prisma generate
+npm run build
+pm2 restart maofu-crm
+npm run db:sync-customer-status    # 历史已收款客户 → 成交客户
+npm run db:sync-performance        # 若首页业绩异常
+```
+
+**验证要点：**
+
+1. 「客户跟进」列表可见客户；点击客户名查看历史跟进（分页 10 条/页）与备注
+2. 新增跟进保存后弹窗自动关闭；待跟进/逾期客户有显著标识
+3. 客户管理可查看/手动修改客户状态（管理员）
+4. 管理员首页默认「本月」统计，数据不为 0（当月有订单/业绩时）
+
+**首次部署初始化数据：**
+
+仓库提供 `prisma/init.db`（当前业务快照），空库执行 `npm run db:init` 即可，无需 `db:seed`。
+
 #### 仅清空订单（保留主数据）
 
 维护场景（如测试环境重置订单、生产清账前已备份）：
@@ -463,8 +524,10 @@ npm run db:clear-orders
 | 命令 | 生产环境 |
 |------|----------|
 | `npm run db:seed` | ❌ 禁止（会 upsert 演示数据，可能覆盖配置） |
+| `npm run db:init` | ❌ 禁止（会覆盖为 init.db 快照） |
 | `npm run db:reset` | ❌ 禁止（清空全部数据） |
 | `npm run db:sync-performance` | ✅ 升级后推荐（回填业绩，不改主数据） |
+| `npm run db:sync-customer-status` | ✅ v0.5+ 升级后推荐（同步成交客户状态） |
 | `npm run db:clear-orders` | ⚠️ 仅维护窗口、已备份；清空全部订单 |
 | `npx prisma migrate deploy` | ✅ 推荐 |
 | `npx prisma db push` | ⚠️ 谨慎，仅 additive 小变更且已备份 |
@@ -648,10 +711,13 @@ chmod 600 /var/lib/maofu-crm/prod.db
 │   └── nginx-maofu-crm.conf.example
 ├── prisma/
 │   ├── schema.prisma
+│   ├── init.db                # 内置初始化数据库快照（首次 db:init 用）
+│   ├── init-db.ts
+│   ├── export-init-db.ts
 │   └── migrations/
 └── scripts/
     ├── backup-db.sh
-    └── (npm scripts: db:sync-performance, db:clear-orders)
+    └── (npm scripts: db:init, db:sync-performance, db:sync-customer-status, db:clear-orders)
 
 /var/lib/maofu-crm/
 └── prod.db                  # 生产数据库（持久化，不随 git pull 变化）
@@ -662,15 +728,17 @@ chmod 600 /var/lib/maofu-crm/prod.db
 
 ---
 
-## 附录：演示账号（首次 seed 后）
+## 附录：演示账号（首次 db:init 或 seed 后）
 
 | 角色 | 用户名 | 初始密码 |
 |------|--------|----------|
-| 管理员 | admin | 123456 |
+| 管理员 | admin, liuyc | 123456 |
 | 销售 | sales01, sales02 | 123456 |
 | 职能 | ops01 | 123456 |
 
 **上线后务必修改全部默认密码。**
+
+`db:init` 内置数据含 6 位客户、2 笔订单、跟进记录及业绩样例，可直接用于演示与验收。
 
 ---
 

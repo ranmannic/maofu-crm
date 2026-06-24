@@ -102,7 +102,7 @@ interface StatsData {
 
 export function DashboardPage({ user }: { user: SessionUser }) {
   const isAdmin = user.role === "ADMIN";
-  const [period, setPeriod] = useState(isAdmin ? "day" : "month");
+  const [period, setPeriod] = useState("month");
   const [salesId, setSalesId] = useState("");
   const [stats, setStats] = useState<StatsData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -111,8 +111,10 @@ export function DashboardPage({ user }: { user: SessionUser }) {
     null | "orders" | "performance-total" | "performance-paid" | "performance-unpaid" | "refund"
   >(null);
   const [dataVisible, setDataVisible] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return sessionStorage.getItem(ADMIN_DASHBOARD_DATA_VISIBLE_KEY) === "true";
+    if (typeof window === "undefined") return true;
+    if (!isAdmin) return true;
+    const stored = sessionStorage.getItem(ADMIN_DASHBOARD_DATA_VISIBLE_KEY);
+    return stored === null ? true : stored === "true";
   });
 
   function toggleDataVisible() {

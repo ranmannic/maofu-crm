@@ -26,6 +26,7 @@ interface Customer {
   channelName: string | null;
   channel?: { id: string; name: string } | null;
   address: string | null;
+  customerStatus: "LEAD" | "CLOSED";
   sales: { id: string; name: string };
   _count: { orders: number };
   createdAt: string;
@@ -64,6 +65,7 @@ export function CustomersPage({ user }: { user: SessionUser }) {
     phone: "",
     channelId: "",
     address: "",
+    customerStatus: "LEAD" as "LEAD" | "CLOSED",
   });
   const [transferSalesId, setTransferSalesId] = useState("");
   const [error, setError] = useState("");
@@ -123,7 +125,7 @@ export function CustomersPage({ user }: { user: SessionUser }) {
 
   function openCreate() {
     setEditing(null);
-    setForm({ name: "", phone: "", channelId: "", address: "" });
+    setForm({ name: "", phone: "", channelId: "", address: "", customerStatus: "LEAD" });
     setError("");
     setModalOpen(true);
   }
@@ -135,6 +137,7 @@ export function CustomersPage({ user }: { user: SessionUser }) {
       phone: "",
       channelId: c.channel?.id || "",
       address: c.address || "",
+      customerStatus: c.customerStatus,
     });
     setError("");
     setModalOpen(true);
@@ -146,7 +149,12 @@ export function CustomersPage({ user }: { user: SessionUser }) {
     const url = editing ? `/api/customers/${editing.id}` : "/api/customers";
     const method = editing ? "PATCH" : "POST";
     const body = editing
-      ? { name: form.name, channelId: form.channelId || null, address: form.address }
+      ? {
+          name: form.name,
+          channelId: form.channelId || null,
+          address: form.address,
+          ...(isAdmin ? { customerStatus: form.customerStatus } : {}),
+        }
       : form;
 
     const res = await fetch(url, {
@@ -271,6 +279,7 @@ export function CustomersPage({ user }: { user: SessionUser }) {
                       <th className="pb-3">客户名称</th>
                       <th className="pb-3">电话</th>
                       <th className="pb-3">渠道</th>
+                      <th className="pb-3">客户状态</th>
                       <th className="pb-3">负责销售</th>
                       <th className="pb-3">订单数</th>
                       <th className="pb-3">创建时间</th>
@@ -295,6 +304,11 @@ export function CustomersPage({ user }: { user: SessionUser }) {
                           {c.channelName ? (
                             <Badge variant="wine">{c.channelName}</Badge>
                           ) : "-"}
+                        </td>
+                        <td className="py-3">
+                          <Badge variant={c.customerStatus === "CLOSED" ? "success" : "wine"}>
+                            {c.customerStatus === "CLOSED" ? "成交客户" : "线索客户"}
+                          </Badge>
                         </td>
                         <td className="py-3">{c.sales.name}</td>
                         <td className="py-3">{c._count.orders}</td>
@@ -371,6 +385,26 @@ export function CustomersPage({ user }: { user: SessionUser }) {
             <Label>地址</Label>
             <Textarea value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
           </div>
+          {isAdmin && editing && (
+            <div>
+              <Label>客户状态</Label>
+              <Select
+                value={form.customerStatus}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    customerStatus: e.target.value as "LEAD" | "CLOSED",
+                  })
+                }
+              >
+                <option value="LEAD">线索客户</option>
+                <option value="CLOSED">成交客户</option>
+              </Select>
+              <p className="text-xs text-muted mt-1 font-serif">
+                订单确认收款后会自动设为成交；也可在此手动调整
+              </p>
+            </div>
+          )}
           {error && <p className="text-sm text-red-700">{error}</p>}
         </div>
         <ModalFooter>

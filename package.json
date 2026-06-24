@@ -1,6 +1,6 @@
 {
   "name": "maofu-crm",
-  "version": "0.1.0",
+  "version": "0.5.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -10,7 +10,10 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
+    "db:init": "tsx prisma/init-db.ts",
+    "db:export-init": "tsx prisma/export-init-db.ts",
     "db:sync-performance": "tsx prisma/sync-performance.ts",
+    "db:sync-customer-status": "tsx prisma/sync-customer-status.ts",
     "db:clear-orders": "tsx prisma/clear-orders.ts",
     "db:reset": "prisma migrate reset --force",
     "postinstall": "prisma generate"

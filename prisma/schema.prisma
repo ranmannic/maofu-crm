@@ -43,6 +43,16 @@ enum PerformanceRecordType {
   REFUND
 }
 
+enum CustomerFollowUpStatus {
+  ACTIVE
+  ABANDONED
+}
+
+enum CustomerStatus {
+  LEAD
+  CLOSED
+}
+
 model User {
   id        String   @id @default(cuid())
   username  String   @unique
@@ -79,11 +89,33 @@ model Customer {
   salesId   String
   sales     User         @relation(fields: [salesId], references: [id])
   deletedAt DateTime?
+  followUpStatus CustomerFollowUpStatus @default(ACTIVE)
+  customerStatus CustomerStatus         @default(LEAD)
+  abandonedAt   DateTime?
+  abandonReason String?
+  followUpNotes String?
   createdAt DateTime     @default(now())
   updatedAt DateTime     @updatedAt
 
   orders            Order[]
   creditInventories CustomerInventory[]
+  followUpRecords   CustomerFollowUpRecord[]
+}
+
+model CustomerFollowUpRecord {
+  id             String   @id @default(cuid())
+  customerId     String
+  customer       Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  userId         String
+  userName       String
+  followedAt     DateTime
+  content        String
+  nextPlan       String?
+  nextFollowUpAt DateTime?
+  createdAt      DateTime @default(now())
+
+  @@index([customerId, followedAt])
+  @@index([nextFollowUpAt])
 }
 
 model Product {

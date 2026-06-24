@@ -84,6 +84,7 @@ export async function POST(request: NextRequest) {
         channelId: body.channelId,
         address: body.address,
         salesId,
+        customerStatus: "LEAD",
       },
       include: {
         sales: { select: { id: true, name: true } },

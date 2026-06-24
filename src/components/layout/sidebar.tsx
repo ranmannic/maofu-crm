@@ -12,6 +12,7 @@ import {
   Wine,
   GitBranch,
   ClipboardList,
+  Phone,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ROLE_LABELS, type SessionUser } from "@/lib/auth-types";
@@ -19,6 +20,7 @@ import { ROLE_LABELS, type SessionUser } from "@/lib/auth-types";
 const navItems = [
   { href: "/", label: "数据概览", icon: LayoutDashboard, roles: ["ADMIN", "SALES"] },
   { href: "/customers", label: "客户管理", icon: Users, roles: ["ADMIN", "SALES"] },
+  { href: "/follow-up", label: "客户跟进", icon: Phone, roles: ["ADMIN", "SALES"] },
   { href: "/orders", label: "订单管理", icon: ShoppingCart, roles: ["ADMIN", "SALES", "OPERATIONS"] },
   { href: "/credit", label: "账期核销", icon: ClipboardList, roles: ["ADMIN", "SALES", "OPERATIONS"] },
   { href: "/products", label: "产品管理", icon: Package, roles: ["ADMIN"] },
