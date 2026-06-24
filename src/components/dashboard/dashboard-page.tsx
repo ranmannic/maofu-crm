@@ -171,8 +171,8 @@ export function DashboardPage({ user }: { user: SessionUser }) {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
+      <div className="page-header">
+        <div className="hidden lg:block">
           <h1 className="text-2xl font-serif font-bold tracking-wide">
             数据概览
           </h1>
@@ -180,7 +180,7 @@ export function DashboardPage({ user }: { user: SessionUser }) {
             {isAdmin ? "全站经营数据与同比分析" : "我的客户与业绩分析"}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="page-header-actions">
           {isAdmin && (
             <Button
               variant="secondary"
@@ -233,7 +233,7 @@ export function DashboardPage({ user }: { user: SessionUser }) {
         <div className="text-center py-20 text-red-700 font-serif">{loadError}</div>
       ) : stats ? (
         <>
-          <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+          <div className="stat-tile-grid cols-6 gap-4">
             <StatCard
               title="订单数"
               value={hidden ? "****" : String(stats.orderStats.total)}
@@ -346,7 +346,7 @@ export function DashboardPage({ user }: { user: SessionUser }) {
             <CardHeader>
               <CardTitle className="font-serif">渠道数据统计</CardTitle>
             </CardHeader>
-            <CardContent className="overflow-x-auto">
+            <CardContent className="table-scroll">
               <table className="w-full text-sm ink-table">
                 <thead>
                   <tr className="border-b border-border text-left text-muted">
@@ -386,7 +386,7 @@ export function DashboardPage({ user }: { user: SessionUser }) {
               <CardHeader>
                 <CardTitle className="font-serif">销售业绩</CardTitle>
               </CardHeader>
-              <CardContent className="overflow-x-auto">
+              <CardContent className="table-scroll">
                 <table className="w-full text-sm ink-table">
                   <thead>
                     <tr className="border-b border-border text-left text-muted">
@@ -425,7 +425,7 @@ export function DashboardPage({ user }: { user: SessionUser }) {
         open={detailModal === "orders"}
         onClose={() => setDetailModal(null)}
         title="订单明细"
-        className="max-w-3xl"
+        className="sm:max-w-3xl"
       >
         <PerformanceOrderTable
           orders={performanceOrders}
@@ -442,7 +442,7 @@ export function DashboardPage({ user }: { user: SessionUser }) {
         open={detailModal === "performance-total"}
         onClose={() => setDetailModal(null)}
         title="业绩总额明细"
-        className="max-w-3xl"
+        className="sm:max-w-3xl"
       >
         <PerformanceOrderTable
           orders={performanceOrders}
@@ -459,7 +459,7 @@ export function DashboardPage({ user }: { user: SessionUser }) {
         open={detailModal === "performance-paid"}
         onClose={() => setDetailModal(null)}
         title="已收款业绩明细"
-        className="max-w-3xl"
+        className="sm:max-w-3xl"
       >
         <PerformanceEventTable
           events={performanceEvents}
@@ -476,7 +476,7 @@ export function DashboardPage({ user }: { user: SessionUser }) {
         open={detailModal === "performance-unpaid"}
         onClose={() => setDetailModal(null)}
         title="未收款业绩明细"
-        className="max-w-3xl"
+        className="sm:max-w-3xl"
       >
         <PerformanceOrderTable
           orders={unpaidPerformanceOrders}
@@ -494,9 +494,9 @@ export function DashboardPage({ user }: { user: SessionUser }) {
         open={detailModal === "refund"}
         onClose={() => setDetailModal(null)}
         title="退款业绩明细"
-        className="max-w-3xl"
+        className="sm:max-w-3xl"
       >
-        <div className="overflow-x-auto">
+        <div className="table-scroll">
           <table className="w-full text-sm ink-table">
             <thead>
               <tr className="border-b border-border text-left text-muted">

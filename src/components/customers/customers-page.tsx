@@ -212,23 +212,25 @@ export function CustomersPage({ user }: { user: SessionUser }) {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="page-header">
+        <div className="hidden lg:block">
           <h1 className="text-2xl font-serif font-bold">客户管理</h1>
           <p className="text-muted text-sm mt-1 font-serif">
             维护客户档案与渠道归属
           </p>
         </div>
+        <div className="page-header-actions">
         <Button onClick={openCreate}>
           <Plus className="h-4 w-4 mr-1" />
           新增客户
         </Button>
+        </div>
       </div>
 
       <Card>
         <CardContent className="pt-5">
-          <div className="flex flex-wrap items-end gap-3 mb-4">
-            <FilterField label="客户ID / 客户名 / 销售" className="min-w-[200px]">
+          <div className="filter-grid">
+            <FilterField label="客户ID / 客户名 / 销售" className="filter-field-wide">
               <Input
                 placeholder="输入关键词"
                 value={draftQ}
@@ -237,7 +239,7 @@ export function CustomersPage({ user }: { user: SessionUser }) {
             </FilterField>
             {isAdmin && (
               <>
-                <FilterField label="负责销售" className="w-36">
+                <FilterField label="负责销售" className="filter-field">
                   <Select
                     value={draftSalesFilter}
                     onChange={(e) => setDraftSalesFilter(e.target.value)}
@@ -260,6 +262,7 @@ export function CustomersPage({ user }: { user: SessionUser }) {
                 </FilterField>
               </>
             )}
+            <div className="filter-actions">
             <Button onClick={handleSearch}>
               <Search className="h-4 w-4 mr-1" />
               查询
@@ -267,13 +270,14 @@ export function CustomersPage({ user }: { user: SessionUser }) {
             <Button variant="secondary" onClick={handleResetFilters}>
               重置
             </Button>
+            </div>
           </div>
 
           {loading ? (
             <div className="text-center py-12 text-muted">加载中...</div>
           ) : (
             <>
-              <div className="overflow-x-auto">
+              <div className="table-scroll">
                 <table className="w-full text-sm ink-table">
                   <thead>
                     <tr className="border-b border-border text-left text-muted">

@@ -61,7 +61,7 @@ export default function LoginPage() {
 
         <form
           onSubmit={handleSubmit}
-          className="rounded-sm border border-border bg-card/95 backdrop-blur p-8 shadow-2xl space-y-5 ink-card"
+          className="rounded-sm border border-border bg-card/95 backdrop-blur p-8 shadow-2xl space-y-5 ink-card form-fill"
         >
           <div>
             <Label htmlFor="username">用户名</Label>

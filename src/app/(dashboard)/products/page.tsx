@@ -153,17 +153,19 @@ export default function ProductsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="page-header">
+        <div className="hidden lg:block">
           <h1 className="text-2xl font-serif font-bold">产品管理</h1>
           <p className="text-muted text-sm mt-1">
             管理产品、规格与销售价/成本价
           </p>
         </div>
-        <Button onClick={openProductCreate}>
+        <div className="page-header-actions">
+        <Button onClick={openProductCreate} className="w-full sm:w-auto">
           <Plus className="h-4 w-4 mr-1" />
           新增产品
         </Button>
+        </div>
       </div>
 
       {loading ? (
@@ -199,6 +201,7 @@ export default function ProductsPage() {
                   </div>
                 </div>
 
+                <div className="table-scroll">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border text-left text-muted">
@@ -240,6 +243,7 @@ export default function ProductsPage() {
                     ))}
                   </tbody>
                 </table>
+                </div>
                 <Button
                   variant="secondary"
                   size="sm"

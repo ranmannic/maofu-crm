@@ -419,7 +419,7 @@ export function FollowUpPage({ user }: { user: SessionUser }) {
 
   return (
     <div className="space-y-5">
-      <div>
+      <div className="hidden lg:block">
         <h1 className="text-2xl font-serif font-bold">客户跟进</h1>
         <p className="text-muted text-sm mt-1 font-serif">
           管理线索与已成交客户的跟进记录，及时提醒待跟进事项
@@ -427,7 +427,7 @@ export function FollowUpPage({ user }: { user: SessionUser }) {
       </div>
 
       {stats && (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="stat-tile-grid cols-6 gap-3">
           {[
             { key: "" as SegmentFilter, label: "跟进中", value: stats.total },
             { key: "LEAD" as SegmentFilter, label: "线索", value: stats.lead },
@@ -489,14 +489,14 @@ export function FollowUpPage({ user }: { user: SessionUser }) {
             </label>
           )}
 
-          <div className="flex flex-wrap gap-2 mb-4">
+          <div className="flex gap-2 mb-4 overflow-x-auto scrollbar-hide pb-1 -mx-1 px-1">
             {SEGMENT_TABS.map((tab) => (
               <button
                 key={tab.key || "all"}
                 type="button"
                 onClick={() => handleSegmentChange(tab.key)}
                 className={cn(
-                  "px-3 py-1.5 rounded-sm text-sm font-serif transition-colors",
+                  "shrink-0 whitespace-nowrap px-3 py-1.5 rounded-sm text-sm font-serif transition-colors",
                   segment === tab.key
                     ? "bg-wine text-paper"
                     : "bg-gray-100 text-muted hover:bg-gray-200"
@@ -510,8 +510,8 @@ export function FollowUpPage({ user }: { user: SessionUser }) {
             ))}
           </div>
 
-          <div className="flex flex-wrap items-end gap-3 mb-4">
-            <FilterField label="客户名 / 电话" className="min-w-[200px]">
+          <div className="filter-grid">
+            <FilterField label="客户名 / 电话" className="filter-field-wide">
               <Input
                 placeholder="输入关键词"
                 value={draftQ}
@@ -520,7 +520,7 @@ export function FollowUpPage({ user }: { user: SessionUser }) {
               />
             </FilterField>
             {isAdmin && (
-              <FilterField label="负责销售" className="w-36">
+              <FilterField label="负责销售">
                 <Select
                   value={draftSalesFilter}
                   onChange={(e) => setDraftSalesFilter(e.target.value)}
@@ -534,6 +534,7 @@ export function FollowUpPage({ user }: { user: SessionUser }) {
                 </Select>
               </FilterField>
             )}
+            <div className="filter-actions">
             <Button onClick={handleSearch}>
               <Search className="h-4 w-4 mr-1" />
               查询
@@ -541,6 +542,7 @@ export function FollowUpPage({ user }: { user: SessionUser }) {
             <Button variant="secondary" onClick={handleResetFilters}>
               重置
             </Button>
+            </div>
           </div>
 
           {loading ? (
@@ -551,7 +553,7 @@ export function FollowUpPage({ user }: { user: SessionUser }) {
             <div className="text-center py-12 text-muted">暂无客户</div>
           ) : (
             <>
-              <div className="overflow-x-auto">
+              <div className="table-scroll">
                 <table className="w-full text-sm ink-table">
                   <thead>
                     <tr className="border-b border-border text-left text-muted">
@@ -811,13 +813,13 @@ export function FollowUpPage({ user }: { user: SessionUser }) {
         open={profileOpen}
         onClose={() => setProfileOpen(false)}
         title={profile ? profile.name : "客户详情"}
-        className="max-w-2xl"
+        className="sm:max-w-2xl"
       >
         {profileLoading || !profile ? (
           <div className="py-8 text-center text-muted">加载中...</div>
         ) : (
           <div className="space-y-5">
-            <div className="grid grid-cols-2 gap-3 text-sm">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
               <div>
                 <div className="text-muted text-xs">客户类型</div>
                 <Badge variant={profile.segment === "CHURNED" ? "danger" : "wine"}>

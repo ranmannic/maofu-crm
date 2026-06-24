@@ -123,17 +123,19 @@ export default function ChannelsPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="page-header">
+        <div className="hidden lg:block">
           <h1 className="text-2xl font-serif font-bold">渠道类型管理</h1>
           <p className="text-muted text-sm mt-1 font-serif">
             两级渠道分类：一级业务类型 + 二级销售渠道
           </p>
         </div>
-        <Button onClick={() => openCreate()}>
+        <div className="page-header-actions">
+        <Button onClick={() => openCreate()} className="w-full sm:w-auto">
           <Plus className="h-4 w-4 mr-1" />
           新增一级分类
         </Button>
+        </div>
       </div>
 
       <Card>
@@ -141,6 +143,7 @@ export default function ChannelsPage() {
           {loading ? (
             <div className="text-center py-12 text-muted">加载中...</div>
           ) : (
+            <div className="table-scroll">
             <table className="w-full text-sm ink-table">
               <thead>
                 <tr className="border-b border-border text-left text-muted">
@@ -157,6 +160,7 @@ export default function ChannelsPage() {
                 })}
               </tbody>
             </table>
+            </div>
           )}
         </CardContent>
       </Card>

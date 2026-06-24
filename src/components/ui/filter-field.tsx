@@ -13,7 +13,7 @@ export function FilterField({
   className?: string;
 }) {
   return (
-    <div className={cn("flex flex-col gap-1", className)}>
+    <div className={cn("filter-field flex flex-col gap-1 min-w-0", className)}>
       <Label className="text-xs text-muted font-serif mb-0">{label}</Label>
       {children}
     </div>

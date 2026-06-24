@@ -129,25 +129,27 @@ export default function UsersPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="page-header">
+        <div className="hidden lg:block">
           <h1 className="text-2xl font-serif font-bold">账号管理</h1>
           <p className="text-muted text-sm mt-1 font-serif">
             创建账号、修改密码与管理角色
           </p>
         </div>
-        <Button onClick={() => { setError(""); setCreateOpen(true); }}>
+        <div className="page-header-actions">
+        <Button onClick={() => { setError(""); setCreateOpen(true); }} className="w-full sm:w-auto">
           <Plus className="h-4 w-4 mr-1" />
           新增账号
         </Button>
+        </div>
       </div>
 
-      <div className="flex gap-2">
+      <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
         {roleTabs.map((t) => (
           <button
             key={t.role}
             onClick={() => setTab(t.role)}
-            className={`px-4 py-2 rounded-sm text-sm font-medium font-serif transition-colors ${
+            className={`shrink-0 whitespace-nowrap px-4 py-2 rounded-sm text-sm font-medium font-serif transition-colors ${
               tab === t.role
                 ? "bg-wine text-paper"
                 : "bg-card border border-border hover:bg-background"
@@ -159,10 +161,11 @@ export default function UsersPage() {
       </div>
 
       <Card>
-        <CardContent className="pt-6 overflow-x-auto">
+        <CardContent className="pt-6">
           {loading ? (
             <div className="text-center py-12 text-muted">加载中...</div>
           ) : (
+            <div className="table-scroll">
             <table className="w-full text-sm ink-table">
               <thead>
                 <tr className="border-b border-border text-left text-muted">
@@ -215,6 +218,7 @@ export default function UsersPage() {
                 )}
               </tbody>
             </table>
+            </div>
           )}
         </CardContent>
       </Card>

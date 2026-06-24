@@ -68,3 +68,192 @@ input, select, textarea {
 * {
   box-sizing: border-box;
 }
+
+/* 移动端表格横向滚动 */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin-left: -1rem;
+  margin-right: -1rem;
+  padding-left: 1rem;
+  padding-right: 1rem;
+}
+
+@media (min-width: 640px) {
+  .table-scroll {
+    margin-left: 0;
+    margin-right: 0;
+    padding-left: 0;
+    padding-right: 0;
+  }
+}
+
+.table-scroll table {
+  min-width: 640px;
+}
+
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+.safe-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* 页面标题区 */
+.page-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+@media (min-width: 640px) {
+  .page-header {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+}
+
+/* 筛选区：手机两列豆腐块，平板三列，桌面横排固定宽度 */
+.filter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem 0.625rem;
+  align-items: end;
+  margin-bottom: 1rem;
+}
+
+@media (min-width: 768px) {
+  .filter-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .filter-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+
+  .filter-grid > .filter-field {
+    flex: 0 0 auto;
+    width: 9.5rem;
+  }
+
+  .filter-grid > .filter-field-wide {
+    width: 12rem;
+  }
+
+  .filter-grid > .filter-field-date {
+    width: 10.5rem;
+  }
+}
+
+.filter-grid .filter-field input,
+.filter-grid .filter-field select {
+  width: 100%;
+  min-width: 0;
+}
+
+.filter-grid > .filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  grid-column: 1 / -1;
+}
+
+.filter-grid > .filter-field-checkbox {
+  grid-column: 1 / -1;
+  align-self: center;
+}
+
+@media (min-width: 1024px) {
+  .filter-grid > .filter-actions {
+    grid-column: auto;
+    flex: 0 0 auto;
+  }
+
+  .filter-grid > .filter-field-checkbox {
+    grid-column: auto;
+  }
+}
+
+/* 统计卡片：手机两列豆腐块 */
+.stat-tile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.625rem;
+}
+
+@media (min-width: 768px) {
+  .stat-tile-grid.cols-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .stat-tile-grid.cols-5 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .stat-tile-grid.cols-6 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .stat-tile-grid.cols-5 {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .stat-tile-grid.cols-6 {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1280px) {
+  .stat-tile-grid.cols-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* 弹窗表单内输入框仍铺满列宽 */
+.form-fill input:not([type="checkbox"]):not([type="radio"]),
+.form-fill select,
+.form-fill textarea {
+  width: 100%;
+}
+
+.input-compact {
+  width: 4rem;
+  min-width: 4rem;
+  max-width: 4rem;
+  text-align: center;
+  padding-left: 0.375rem;
+  padding-right: 0.375rem;
+}
+
+.form-fill input.input-compact {
+  width: 4rem;
+  min-width: 4rem;
+  max-width: 4rem;
+}
+
+.page-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.page-header-actions > button {
+  flex: 0 0 auto;
+}

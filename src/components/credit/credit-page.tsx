@@ -301,7 +301,7 @@ export function CreditPage({ user }: { user: SessionUser }) {
 
   return (
     <div className="space-y-5">
-      <div>
+      <div className="hidden lg:block">
         <h1 className="text-2xl font-serif font-bold">账期核销管理</h1>
         <p className="text-muted text-sm mt-1 font-serif">
           部分收款客户的库存核销、付款跟进与坏账处理
@@ -310,7 +310,7 @@ export function CreditPage({ user }: { user: SessionUser }) {
       </div>
 
       {stats && !isSettledView && (
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+        <div className="stat-tile-grid cols-5 gap-3">
           <StatCard title="未核销数量" value={`${stats.totalUnreconciled}瓶`} />
           <StatCard
             title="未核销金额"
@@ -354,8 +354,8 @@ export function CreditPage({ user }: { user: SessionUser }) {
             )}
           </div>
 
-          <div className="flex flex-wrap items-end gap-3 mb-4">
-            <FilterField label="客户" className="min-w-[160px]">
+          <div className="filter-grid">
+            <FilterField label="客户">
               <Input
                 placeholder="客户名称"
                 value={customerQ}
@@ -363,7 +363,7 @@ export function CreditPage({ user }: { user: SessionUser }) {
               />
             </FilterField>
             {viewMode === "settled" && (
-              <FilterField label="订单号" className="min-w-[160px]">
+              <FilterField label="订单号">
                 <Input
                   placeholder="订单号"
                   value={orderNoQ}
@@ -371,10 +371,12 @@ export function CreditPage({ user }: { user: SessionUser }) {
                 />
               </FilterField>
             )}
+            <div className="filter-actions">
             <Button onClick={handleSearch}>
               <Search className="h-4 w-4 mr-1" />
               查询
             </Button>
+            </div>
           </div>
 
           {loading ? (
@@ -412,6 +414,7 @@ export function CreditPage({ user }: { user: SessionUser }) {
                       <h4 className="text-sm font-medium mb-2 font-serif">
                         客户库存
                       </h4>
+                      <div className="table-scroll">
                       <table className="w-full text-sm ink-table">
                         <thead>
                           <tr className="border-b border-border text-left text-muted">
@@ -432,6 +435,7 @@ export function CreditPage({ user }: { user: SessionUser }) {
                           ))}
                         </tbody>
                       </table>
+                      </div>
                     </div>
                   )}
 
@@ -516,6 +520,7 @@ export function CreditPage({ user }: { user: SessionUser }) {
                               </>
                             )}
                           </div>
+                          <div className="table-scroll">
                           <table className="w-full text-xs ink-table">
                             <thead>
                               <tr className="border-b border-border text-muted">
@@ -549,6 +554,7 @@ export function CreditPage({ user }: { user: SessionUser }) {
                               ))}
                             </tbody>
                           </table>
+                          </div>
                           {!isSettledView && o.creditStatus === "BAD_DEBT" && (
                             <div className="text-xs text-muted bg-red-50 p-2 rounded-sm">
                               坏账金额：{formatCurrency(o.badDebtAmount ?? 0)} ·
@@ -609,11 +615,11 @@ export function CreditPage({ user }: { user: SessionUser }) {
         open={payModalOpen}
         onClose={() => setPayModalOpen(false)}
         title={`核销付款 · ${selectedOrder?.orderNo || ""}`}
-        className="max-w-2xl"
+        className="sm:max-w-2xl"
       >
         {selectedOrder && (
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <Label>付款状态</Label>
                 <Select
@@ -678,10 +684,13 @@ export function CreditPage({ user }: { user: SessionUser }) {
               <p className="text-xs text-muted mb-2">
                 填写本次付款对应的核销数量（从未核销转为已核销）
               </p>
-              <div className="space-y-2 border border-border rounded-sm p-3">
+              <div className="space-y-3 border border-border rounded-sm p-3">
                 {selectedOrder.items.map((item) => (
-                  <div key={item.id} className="flex items-center gap-2 text-sm">
-                    <span className="flex-1">
+                  <div
+                    key={item.id}
+                    className="flex flex-col gap-2 border-b border-border/40 pb-3 last:border-0 last:pb-0 sm:flex-row sm:items-center sm:gap-3"
+                  >
+                    <div className="min-w-0 flex-1 text-sm leading-snug">
                       {item.productName} · {item.specName}
                       <span className="text-muted ml-1">
                         {item.isGift
@@ -693,21 +702,26 @@ export function CreditPage({ user }: { user: SessionUser }) {
                           赠品
                         </Badge>
                       )}
-                      （未核销 {item.unreconciledBottles}
-                      瓶 / {item.unreconciledQty}{item.unitLabel}）
-                    </span>
-                    <QtyInput
-                      min={0}
-                      max={item.unreconciledQty}
-                      className="w-24"
-                      disabled={item.unreconciledQty <= 0}
-                      value={reconcileQty[item.id] ?? 0}
-                      onChange={(n) =>
-                        selectedOrder &&
-                        updateReconcileQty(selectedOrder, item.id, n)
-                      }
-                    />
-                    <span className="text-xs text-muted w-8">{item.unitLabel}</span>
+                      <span className="block text-xs text-muted mt-0.5 sm:inline sm:mt-0 sm:ml-1">
+                        未核销 {item.unreconciledBottles}瓶 / {item.unreconciledQty}
+                        {item.unitLabel}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+                      <span className="text-xs text-muted whitespace-nowrap">数量</span>
+                      <QtyInput
+                        min={0}
+                        max={item.unreconciledQty}
+                        className="input-compact"
+                        disabled={item.unreconciledQty <= 0}
+                        value={reconcileQty[item.id] ?? 0}
+                        onChange={(n) =>
+                          selectedOrder &&
+                          updateReconcileQty(selectedOrder, item.id, n)
+                        }
+                      />
+                      <span className="text-xs text-muted">{item.unitLabel}</span>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -734,7 +748,7 @@ export function CreditPage({ user }: { user: SessionUser }) {
         open={voucherModalOpen}
         onClose={() => setVoucherModalOpen(false)}
         title={`订单凭证 · ${voucherOrder?.orderNo || ""}`}
-        className="max-w-2xl"
+        className="sm:max-w-2xl"
       >
         <OrderVouchersPanel
           orderId={voucherOrder?.id ?? null}
@@ -751,11 +765,11 @@ export function CreditPage({ user }: { user: SessionUser }) {
         open={badDebtModalOpen}
         onClose={() => setBadDebtModalOpen(false)}
         title={`标记坏账 · ${selectedOrder?.orderNo || ""}`}
-        className="max-w-2xl"
+        className="sm:max-w-2xl"
       >
         {selectedOrder && (
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <Label>坏账金额 *</Label>
                 <Input
@@ -839,7 +853,7 @@ export function CreditPage({ user }: { user: SessionUser }) {
         open={reconcileHistoryOpen}
         onClose={() => setReconcileHistoryOpen(false)}
         title={`核销记录 · ${selectedOrder?.orderNo || ""}`}
-        className="max-w-2xl"
+        className="sm:max-w-2xl"
       >
         {selectedOrder && (
           <div className="space-y-4 max-h-[60vh] overflow-y-auto">
@@ -855,7 +869,7 @@ export function CreditPage({ user }: { user: SessionUser }) {
                     <span className="font-medium">{rec.action}</span>
                     <span className="text-muted">{formatDate(rec.createdAt)}</span>
                   </div>
-                  <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
                     <div>
                       <span className="text-muted">操作人：</span>
                       {rec.userName}

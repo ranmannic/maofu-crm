@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Noto_Sans_SC, Noto_Serif_SC } from "next/font/google";
 import "./globals.css";
 
@@ -17,6 +17,12 @@ const notoSerif = Noto_Serif_SC({
 export const metadata: Metadata = {
   title: "毛府酒庄 - 订单与CRM管理后台",
   description: "毛府酒庄订单与CRM管理后台，支持销售、职能、管理员三角色",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

@@ -10,7 +10,7 @@ export const Input = forwardRef<
   <input
     ref={ref}
     className={cn(
-      "w-full rounded-lg border border-border bg-white px-3 py-2 text-sm outline-none focus:border-wine focus:ring-2 focus:ring-wine/20",
+      "block max-w-full min-w-0 rounded-lg border border-border bg-white px-3 py-2 text-sm outline-none focus:border-wine focus:ring-2 focus:ring-wine/20",
       className
     )}
     {...props}
@@ -81,7 +81,7 @@ export const Select = forwardRef<
   <select
     ref={ref}
     className={cn(
-      "w-full rounded-lg border border-border bg-white px-3 py-2 text-sm outline-none focus:border-wine focus:ring-2 focus:ring-wine/20",
+      "block max-w-full min-w-0 rounded-lg border border-border bg-white px-3 py-2 text-sm outline-none focus:border-wine focus:ring-2 focus:ring-wine/20",
       className
     )}
     {...props}
@@ -98,7 +98,7 @@ export const Textarea = forwardRef<
   <textarea
     ref={ref}
     className={cn(
-      "w-full rounded-lg border border-border bg-white px-3 py-2 text-sm outline-none focus:border-wine focus:ring-2 focus:ring-wine/20 min-h-[80px]",
+      "block max-w-full min-w-0 rounded-lg border border-border bg-white px-3 py-2 text-sm outline-none focus:border-wine focus:ring-2 focus:ring-wine/20 min-h-[80px]",
       className
     )}
     {...props}

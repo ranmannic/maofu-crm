@@ -21,11 +21,11 @@ export function Pagination({
   const to = Math.min(page * pageSize, total);
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-border">
-      <p className="text-sm text-muted font-serif">
+    <div className="flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+      <p className="text-sm text-muted font-serif text-center sm:text-left">
         共 {total} 条，显示 {from}-{to}
       </p>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center justify-center gap-2 sm:justify-end">
         <Button
           variant="secondary"
           size="sm"

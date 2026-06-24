@@ -10,7 +10,7 @@ import { Input, Label, Select, Textarea, QtyInput } from "@/components/ui/input"
 import { Pagination } from "@/components/ui/pagination";
 import { FilterField } from "@/components/ui/filter-field";
 import { DEFAULT_PAGE_SIZE, SPEC_UNIT_LABELS, SHIPPING_METHOD_OPTIONS, SHIPPING_METHOD_LABELS } from "@/lib/constants";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { formatCurrency, formatDate, cn } from "@/lib/utils";
 import { formatShippingAddress } from "@/lib/address-parse";
 import { calcReconcilePaidAmount, calcCreateReconcilePaidAmount } from "@/lib/reconcile-ui";
 import { OrderVouchersPanel } from "@/components/orders/order-vouchers-panel";
@@ -690,27 +690,135 @@ export function OrdersPage({ user }: { user: SessionUser }) {
     return spec ? SPEC_UNIT_LABELS[spec.unitType] : "";
   }
 
+  function renderOrderActions(o: Order) {
+    return (
+      <>
+        <button onClick={() => openDetail(o)} className="text-wine hover:underline text-xs inline-flex items-center gap-0.5">
+          <Eye className="h-3 w-3" />详情
+        </button>
+        {canManageOps && !o.isDeleted && (
+          <button onClick={() => openShipping(o)} className="text-wine hover:underline text-xs inline-flex items-center gap-0.5">
+            <Truck className="h-3 w-3" />设置发货
+          </button>
+        )}
+        {canManageOps && !o.isDeleted && (
+          <button onClick={() => openPayment(o)} className="text-wine hover:underline text-xs inline-flex items-center gap-0.5">
+            <Wallet className="h-3 w-3" />设置收款
+          </button>
+        )}
+        {!o.isDeleted && (
+          <button onClick={() => openVouchers(o)} className="text-muted hover:text-wine text-xs inline-flex items-center gap-0.5">
+            <Paperclip className="h-3 w-3" />凭证
+          </button>
+        )}
+        {canDelete && !o.isDeleted && (
+          <button onClick={() => handleDelete(o)} className="text-red-700 hover:underline text-xs inline-flex items-center gap-0.5">
+            <Trash2 className="h-3 w-3" />删除
+          </button>
+        )}
+        {isAdmin && o.isDeleted && (
+          <button onClick={() => handleRestore(o)} className="text-wine hover:underline text-xs inline-flex items-center gap-0.5">
+            <RotateCcw className="h-3 w-3" />恢复
+          </button>
+        )}
+      </>
+    );
+  }
+
+  function renderOrderMobileCard(o: Order) {
+    const badge = getPaymentBadge(o);
+    return (
+      <div
+        key={o.id}
+        className={cn(
+          "rounded-lg border border-border bg-white p-3",
+          o.isDeleted && "opacity-60"
+        )}
+      >
+        <div className="flex items-start justify-between gap-2 mb-2">
+          <span className="font-mono text-xs font-semibold break-all">{o.orderNo}</span>
+          {o.isDeleted && <Badge variant="warning">已删除</Badge>}
+        </div>
+        <dl className="space-y-1.5 text-sm">
+          <div className="flex gap-2">
+            <dt className="shrink-0 text-muted w-14">客户</dt>
+            <dd className="min-w-0 flex-1">{o.customerName}</dd>
+          </div>
+          <div className="flex gap-2">
+            <dt className="shrink-0 text-muted w-14">产品</dt>
+            <dd className="min-w-0 flex-1 text-xs leading-relaxed">{o.itemsSummary || "-"}</dd>
+          </div>
+          <div className="flex gap-2">
+            <dt className="shrink-0 text-muted w-14">销售</dt>
+            <dd className="min-w-0 flex-1">{o.sales.name}</dd>
+          </div>
+          <div className="flex gap-2">
+            <dt className="shrink-0 text-muted w-14">总金额</dt>
+            <dd className="min-w-0 flex-1 font-medium">{formatCurrency(o.totalAmount)}</dd>
+          </div>
+          {isAdmin && (
+            <div className="flex gap-2">
+              <dt className="shrink-0 text-muted w-14">毛利</dt>
+              <dd className="min-w-0 flex-1 text-wine">
+                {o.profit !== undefined ? formatCurrency(o.profit) : "-"}
+                {typeof o.profitMargin === "number" ? ` (${o.profitMargin.toFixed(1)}%)` : ""}
+              </dd>
+            </div>
+          )}
+          <div className="flex gap-2 items-center">
+            <dt className="shrink-0 text-muted w-14">收款</dt>
+            <dd>
+              <Badge variant={badge.variant}>
+                {badge.label}
+                {o.paymentStatus === "PARTIAL" && o.paidAmount > 0
+                  ? ` ${formatCurrency(o.paidAmount)}`
+                  : ""}
+              </Badge>
+            </dd>
+          </div>
+          <div className="flex gap-2 items-center">
+            <dt className="shrink-0 text-muted w-14">发货</dt>
+            <dd>
+              <Badge variant={o.isShipped ? "success" : "default"}>
+                {o.isShipped ? "已发" : "未发"}
+              </Badge>
+            </dd>
+          </div>
+          <div className="flex gap-2">
+            <dt className="shrink-0 text-muted w-14">下单</dt>
+            <dd className="min-w-0 flex-1">{formatDate(o.orderedAt)}</dd>
+          </div>
+        </dl>
+        <div className="mt-3 pt-3 border-t border-border/50 flex flex-wrap gap-x-3 gap-y-2">
+          {renderOrderActions(o)}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="page-header">
+        <div className="hidden lg:block">
           <h1 className="text-2xl font-serif font-bold">订单管理</h1>
           <p className="text-muted text-sm mt-1 font-serif">订单全流程跟踪与处理</p>
         </div>
         {canCreate && (
+          <div className="page-header-actions">
           <Button onClick={openCreate}>
             <Plus className="h-4 w-4 mr-1" />
             新建订单
           </Button>
+          </div>
         )}
       </div>
 
       <Card>
         <CardContent className="pt-5">
-          <div className="flex flex-wrap items-end gap-3 mb-4">
+          <div className="filter-grid">
             {isSales ? (
               <>
-                <FilterField label="订单号" className="min-w-[160px]">
+                <FilterField label="订单号">
                   <Input
                     placeholder="输入订单号"
                     value={filterDraft.orderNo}
@@ -719,7 +827,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                     }
                   />
                 </FilterField>
-                <FilterField label="创建开始日期">
+                <FilterField label="创建开始日期" className="filter-field-date">
                   <Input
                     type="date"
                     value={filterDraft.orderedStart}
@@ -728,7 +836,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                     }
                   />
                 </FilterField>
-                <FilterField label="创建结束日期">
+                <FilterField label="创建结束日期" className="filter-field-date">
                   <Input
                     type="date"
                     value={filterDraft.orderedEnd}
@@ -737,7 +845,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                     }
                   />
                 </FilterField>
-                <label className="flex items-center gap-2 text-sm text-muted pb-2">
+                <label className="filter-field-checkbox flex items-center gap-2 text-sm text-muted">
                   <input
                     type="checkbox"
                     checked={draftShowDeleted}
@@ -748,7 +856,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
               </>
             ) : (
               <>
-                <FilterField label="订单号" className="min-w-[140px]">
+                <FilterField label="订单号">
                   <Input
                     placeholder="订单号"
                     value={filterDraft.orderNo}
@@ -757,7 +865,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                     }
                   />
                 </FilterField>
-                <FilterField label="客户" className="min-w-[120px]">
+                <FilterField label="客户">
                   <Input
                     placeholder="客户名/ID"
                     value={filterDraft.customer}
@@ -766,7 +874,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                     }
                   />
                 </FilterField>
-                <FilterField label="销售" className="min-w-[120px]">
+                <FilterField label="销售">
                   <Input
                     placeholder="销售名"
                     value={filterDraft.sales}
@@ -775,7 +883,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                     }
                   />
                 </FilterField>
-                <FilterField label="创建开始日期">
+                <FilterField label="创建开始日期" className="filter-field-date">
                   <Input
                     type="date"
                     value={filterDraft.orderedStart}
@@ -784,7 +892,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                     }
                   />
                 </FilterField>
-                <FilterField label="创建结束日期">
+                <FilterField label="创建结束日期" className="filter-field-date">
                   <Input
                     type="date"
                     value={filterDraft.orderedEnd}
@@ -793,7 +901,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                     }
                   />
                 </FilterField>
-                <FilterField label="付款开始日期">
+                <FilterField label="付款开始日期" className="filter-field-date">
                   <Input
                     type="date"
                     value={filterDraft.paidStart}
@@ -802,7 +910,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                     }
                   />
                 </FilterField>
-                <FilterField label="付款结束日期">
+                <FilterField label="付款结束日期" className="filter-field-date">
                   <Input
                     type="date"
                     value={filterDraft.paidEnd}
@@ -841,7 +949,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                     <option value="false">未发货</option>
                   </Select>
                 </FilterField>
-                <label className="flex items-center gap-2 text-sm text-muted pb-2">
+                <label className="filter-field-checkbox flex items-center gap-2 text-sm text-muted">
                   <input
                     type="checkbox"
                     checked={draftShowDeleted}
@@ -851,6 +959,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                 </label>
               </>
             )}
+            <div className="filter-actions">
             <Button onClick={handleSearch}>
               <Search className="h-4 w-4 mr-1" />
               查询
@@ -858,13 +967,17 @@ export function OrdersPage({ user }: { user: SessionUser }) {
             <Button variant="secondary" onClick={handleResetFilters}>
               重置
             </Button>
+            </div>
           </div>
 
           {loading ? (
             <div className="text-center py-12 text-muted">加载中...</div>
           ) : (
             <>
-              <div className="overflow-x-auto">
+              <div className="md:hidden space-y-3">
+                {orders.map((o) => renderOrderMobileCard(o))}
+              </div>
+              <div className="hidden md:block table-scroll">
                 <table className="w-full text-sm ink-table">
                   <thead>
                     <tr className="border-b border-border text-left text-muted">
@@ -921,34 +1034,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                         <td className="py-3">{formatDate(o.orderedAt)}</td>
                         <td className="py-3">
                           <div className="flex flex-wrap items-center gap-2">
-                            <button onClick={() => openDetail(o)} className="text-wine hover:underline text-xs inline-flex items-center gap-0.5">
-                              <Eye className="h-3 w-3" />详情
-                            </button>
-                            {canManageOps && !o.isDeleted && (
-                              <button onClick={() => openShipping(o)} className="text-wine hover:underline text-xs inline-flex items-center gap-0.5">
-                                <Truck className="h-3 w-3" />设置发货
-                              </button>
-                            )}
-                            {canManageOps && !o.isDeleted && (
-                              <button onClick={() => openPayment(o)} className="text-wine hover:underline text-xs inline-flex items-center gap-0.5">
-                                <Wallet className="h-3 w-3" />设置收款
-                              </button>
-                            )}
-                            {!o.isDeleted && (
-                              <button onClick={() => openVouchers(o)} className="text-muted hover:text-wine text-xs inline-flex items-center gap-0.5">
-                                <Paperclip className="h-3 w-3" />凭证
-                              </button>
-                            )}
-                            {canDelete && !o.isDeleted && (
-                              <button onClick={() => handleDelete(o)} className="text-red-700 hover:underline text-xs inline-flex items-center gap-0.5">
-                                <Trash2 className="h-3 w-3" />删除
-                              </button>
-                            )}
-                            {isAdmin && o.isDeleted && (
-                              <button onClick={() => handleRestore(o)} className="text-wine hover:underline text-xs inline-flex items-center gap-0.5">
-                                <RotateCcw className="h-3 w-3" />恢复
-                              </button>
-                            )}
+                            {renderOrderActions(o)}
                           </div>
                         </td>
                       </tr>
@@ -963,7 +1049,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
       </Card>
 
       {/* Create Modal */}
-      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="新建订单" className="max-w-2xl">
+      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="新建订单" className="sm:max-w-2xl">
         <div className="space-y-4">
           <div>
             <Label>客户 *</Label>
@@ -1088,7 +1174,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
               添加产品
             </Button>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <Label>产品金额</Label>
               <Input value={formatCurrency(productAmountPreview)} readOnly className="bg-paper" />
@@ -1139,7 +1225,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
           {canManageOps && (
             <>
               <h4 className="font-serif font-medium pt-2 border-t border-border">收款（可选）</h4>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <Select
                   value={createPaymentForm.paymentStatus}
                   onChange={(e) => {
@@ -1201,24 +1287,35 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                       .map((item) => {
                         const spec = specs.find((s) => s.id === item.productSpecId);
                         return (
-                          <div key={item.productSpecId} className="flex items-center gap-2 text-sm">
-                            <span className="flex-1">
+                          <div
+                            key={item.productSpecId}
+                            className="flex flex-col gap-2 border-b border-border/40 pb-3 last:border-0 last:pb-0 sm:flex-row sm:items-center sm:gap-3"
+                          >
+                            <span className="min-w-0 flex-1 text-sm leading-snug">
                               {spec?.label ?? item.productSpecId}
                               {item.isGift && (
                                 <Badge variant="wine" className="ml-1 text-[10px] px-1 py-0">
                                   赠品
                                 </Badge>
                               )}
-                              （可核销 {item.quantity}
-                              {spec ? getUnitForItem(item.productSpecId) : ""}）
+                              <span className="block text-xs text-muted mt-0.5 sm:inline sm:mt-0 sm:ml-1">
+                                可核销 {item.quantity}
+                                {spec ? getUnitForItem(item.productSpecId) : ""}
+                              </span>
                             </span>
-                            <QtyInput
-                              min={0}
-                              max={item.quantity}
-                              className="w-24"
-                              value={createReconcileQty[item.productSpecId] ?? 0}
-                              onChange={(n) => updateCreateReconcileQty(item.productSpecId, n)}
-                            />
+                            <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+                              <span className="text-xs text-muted whitespace-nowrap">数量</span>
+                              <QtyInput
+                                min={0}
+                                max={item.quantity}
+                                className="input-compact"
+                                value={createReconcileQty[item.productSpecId] ?? 0}
+                                onChange={(n) => updateCreateReconcileQty(item.productSpecId, n)}
+                              />
+                              <span className="text-xs text-muted">
+                                {spec ? getUnitForItem(item.productSpecId) : ""}
+                              </span>
+                            </div>
                           </div>
                         );
                       })}
@@ -1239,10 +1336,10 @@ export function OrdersPage({ user }: { user: SessionUser }) {
       </Modal>
 
       {/* Detail Modal */}
-      <Modal open={detailOpen} onClose={() => setDetailOpen(false)} title={`订单 ${selected?.orderNo || ""}`} className="max-w-2xl">
+      <Modal open={detailOpen} onClose={() => setDetailOpen(false)} title={`订单 ${selected?.orderNo || ""}`} className="sm:max-w-2xl">
         {selected && (
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-2 text-sm">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
               <div><span className="text-muted">客户：</span>{selected.customerName}</div>
               <div><span className="text-muted">销售：</span>{selected.sales.name}</div>
               <div><span className="text-muted">产品金额：</span>{formatCurrency(selected.productAmount ?? 0)}</div>
@@ -1314,7 +1411,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
             )}
 
             {canManageOps && !selected.isDeleted && (
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <Label>修改总金额</Label>
                   <Input type="number" value={editTotalAmount} onChange={(e) => setEditTotalAmount(parseFloat(e.target.value) || 0)} />
@@ -1331,7 +1428,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
             {(canManageOps || selected.shipping?.method || selected.isShipped) && (
               <>
                 <h4 className="font-serif font-medium">发货信息</h4>
-                <div className="grid grid-cols-2 gap-2 text-sm">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
                   {selected.shipping?.method && (
                     <div>
                       <span className="text-muted">发货方式：</span>
@@ -1387,7 +1484,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
             {canManageOps && !selected.isDeleted && (
               <>
                 <h4 className="font-serif font-medium">退款</h4>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <Select
                     value={refundForm.refundStatus}
                     onChange={(e) => {
@@ -1472,15 +1569,15 @@ export function OrdersPage({ user }: { user: SessionUser }) {
         open={payModalOpen}
         onClose={() => setPayModalOpen(false)}
         title={`设置收款 · ${paymentOrder?.orderNo || ""}`}
-        className="max-w-2xl"
+        className="sm:max-w-2xl"
       >
         {paymentOrder && (
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-2 text-sm">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
               <div><span className="text-muted">客户：</span>{paymentOrder.customerName}</div>
               <div><span className="text-muted">订单总额：</span>{formatCurrency(paymentOrder.totalAmount)}</div>
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div>
                 <Label>付款状态</Label>
                 <Select
@@ -1550,35 +1647,43 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                   <p className="text-xs text-muted mb-2">
                     部分付款或账期补款结清需填写本次核销数量
                   </p>
-                  <div className="space-y-2 border border-border rounded-sm p-3">
+                  <div className="space-y-3 border border-border rounded-sm p-3">
                     {(paymentOrder.items ?? []).map((item) => {
                       const line = paymentOrder.creditLines?.find(
                         (l) => l.orderItemId === item.id
                       );
                       const maxQty = line?.unreconciledQty ?? item.quantity;
                       return (
-                        <div key={item.id} className="flex items-center gap-2 text-sm">
-                          <span className="flex-1">
+                        <div
+                          key={item.id}
+                          className="flex flex-col gap-2 border-b border-border/40 pb-3 last:border-0 last:pb-0 sm:flex-row sm:items-center sm:gap-3"
+                        >
+                          <div className="min-w-0 flex-1 text-sm leading-snug">
                             {item.productName} · {item.specName}
                             {item.isGift && (
                               <Badge variant="wine" className="ml-1 text-[10px] px-1 py-0">
                                 赠品
                               </Badge>
                             )}
-                            （可核销 {maxQty}
-                            {SPEC_UNIT_LABELS[item.unitType]}）
-                          </span>
-                          <QtyInput
-                            min={0}
-                            max={maxQty}
-                            className="w-24"
-                            disabled={maxQty <= 0}
-                            value={reconcileQty[item.id] ?? 0}
-                            onChange={(n) => updatePaymentReconcileQty(item.id, n)}
-                          />
-                          <span className="text-xs text-muted w-8">
-                            {SPEC_UNIT_LABELS[item.unitType]}
-                          </span>
+                            <span className="block text-xs text-muted mt-0.5 sm:inline sm:mt-0 sm:ml-1">
+                              可核销 {maxQty}
+                              {SPEC_UNIT_LABELS[item.unitType]}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+                            <span className="text-xs text-muted whitespace-nowrap">数量</span>
+                            <QtyInput
+                              min={0}
+                              max={maxQty}
+                              className="input-compact"
+                              disabled={maxQty <= 0}
+                              value={reconcileQty[item.id] ?? 0}
+                              onChange={(n) => updatePaymentReconcileQty(item.id, n)}
+                            />
+                            <span className="text-xs text-muted">
+                              {SPEC_UNIT_LABELS[item.unitType]}
+                            </span>
+                          </div>
                         </div>
                       );
                     })}
@@ -1613,11 +1718,11 @@ export function OrdersPage({ user }: { user: SessionUser }) {
         open={shipModalOpen}
         onClose={() => setShipModalOpen(false)}
         title={`设置发货 · ${shippingOrder?.orderNo || ""}`}
-        className="max-w-2xl"
+        className="sm:max-w-2xl"
       >
         {shippingOrder && (
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-2 text-sm">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
               <div><span className="text-muted">客户：</span>{shippingOrder.customerName}</div>
               <div>
                 <span className="text-muted">发货方式：</span>
@@ -1643,7 +1748,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                   </div>
                 </div>
               )}
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div>
                 <Label>发货状态</Label>
                 <Select
@@ -1714,7 +1819,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
         open={voucherModalOpen}
         onClose={() => setVoucherModalOpen(false)}
         title={`订单凭证 · ${voucherOrder?.orderNo || ""}`}
-        className="max-w-2xl"
+        className="sm:max-w-2xl"
       >
         <OrderVouchersPanel
           orderId={voucherOrder?.id ?? null}

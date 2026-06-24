@@ -27,7 +27,7 @@ export function CardHeader({
   className?: string;
 }) {
   return (
-    <div className={cn("px-6 py-4 border-b border-border", className)}>
+    <div className={cn("border-b border-border px-4 py-3 sm:px-6 sm:py-4", className)}>
       {children}
     </div>
   );
@@ -54,5 +54,5 @@ export function CardContent({
   children: React.ReactNode;
   className?: string;
 }) {
-  return <div className={cn("px-6 py-4", className)}>{children}</div>;
+  return <div className={cn("px-4 py-3 sm:px-6 sm:py-4", className)}>{children}</div>;
 }
