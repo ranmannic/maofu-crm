@@ -1,0 +1,27 @@
+# Dependencies
+node_modules
+.next
+out
+
+# Git & IDE
+.git
+.gitignore
+.cursor
+.vscode
+
+# Env & local db (init.db is included explicitly in Dockerfile)
+.env
+.env.*
+!.env.example
+!.env.docker.example
+dev.db
+*.db-journal
+
+# Dev runtime
+.node
+
+# Docs & misc
+*.md
+!docs/DEPLOY.md
+coverage
+.DS_Store

@@ -1,18 +1,20 @@
-# 毛府酒庄 CRM — 阿里云 Linux 部署指南
+# 毛府酒庄 CRM — Docker 部署指南
 
-本文档适用于 **阿里云 ECS** + **Alibaba Cloud Linux 3**（或兼容的 RHEL/CentOS 系发行版），介绍从零部署、日常更新、以及**如何保证生产数据不丢失**。
+本文档适用于 **线上 Docker / Docker Compose** 部署（阿里云 ECS、轻量应用服务器等），介绍从零部署、版本更新、数据备份与迁移策略。
+
+> **备选方案**：不使用 Docker 时，见 [附录 A：PM2 传统部署](#附录-apm2-传统部署)。
 
 ---
 
 ## 目录
 
 1. [架构概览](#1-架构概览)
-2. [服务器要求](#2-服务器要求)
-3. [首次部署（完整步骤）](#3-首次部署完整步骤)
-4. [环境变量说明](#4-环境变量说明)
-5. [进程管理与 Nginx](#5-进程管理与-nginx)
-6. [后续版本更新部署](#6-后续版本更新部署)
-7. [生产数据保护与迁移策略](#7-生产数据保护与迁移策略)
+2. [环境要求](#2-环境要求)
+3. [首次部署](#3-首次部署)
+4. [环境变量](#4-环境变量)
+5. [日常运维](#5-日常运维)
+6. [版本更新](#6-版本更新)
+7. [生产数据保护与迁移](#7-生产数据保护与迁移)
 8. [备份与恢复](#8-备份与恢复)
 9. [回滚方案](#9-回滚方案)
 10. [常见问题](#10-常见问题)
@@ -25,710 +27,442 @@
 用户浏览器
     │
     ▼
-Nginx (:80 / :443)  ──反向代理──▶  Next.js (:3000, PM2)
-                                        │
-                                        ▼
-                              SQLite 文件数据库
-                              /var/lib/maofu-crm/prod.db
+Nginx 容器 (:80)  ──可选──▶  maofu-crm 容器 (:3000)
+    │                              │
+    │         或宿主机 Nginx 反代 ───┘
+    ▼
+Docker Volume: maofu-crm-data
+    └── /data/prod.db   （SQLite，持久化）
 ```
 
 | 组件 | 说明 |
 |------|------|
-| Next.js 16 | 前后端一体，生产模式 `next start` |
-| Prisma 7 + SQLite | 单文件数据库，适合中小规模 B 端 |
-| PM2 | 守护进程、崩溃自动重启 |
-| Nginx | 反向代理、HTTPS 终结 |
-
-> **重要**：SQLite 数据库文件必须放在**持久化目录**（如 `/var/lib/maofu-crm/`），**不要**放在项目代码目录内，避免 `git pull` 时被覆盖或误删。
+| `Dockerfile` | 多阶段构建 Next.js standalone + Prisma |
+| `docker-compose.yml` | 应用容器 + 可选 Nginx |
+| `docker/entrypoint.sh` | 启动前自动 `migrate deploy`，支持空卷初始化 |
+| SQLite | 数据库文件挂载在命名卷 `/data/prod.db`，**不随镜像更新丢失** |
 
 ---
 
-## 2. 服务器要求
+## 2. 环境要求
 
 | 项目 | 最低建议 |
 |------|----------|
 | 规格 | 2 vCPU / 2 GB 内存 |
-| 系统 | Alibaba Cloud Linux 3 / CentOS 7+ / Rocky 8+ |
-| 磁盘 | 40 GB+（含备份空间） |
-| Node.js | **20.19+** 或 **22.x**（Prisma 7 硬性要求） |
-| 安全组 | 放行 22（SSH）、80（HTTP）、443（HTTPS） |
+| 系统 | Alibaba Cloud Linux 3 / Ubuntu 22.04+ / 任意支持 Docker 的 Linux |
+| Docker | **24+** |
+| Docker Compose | **v2+**（`docker compose` 命令） |
+| 磁盘 | 40 GB+（含镜像、数据卷、备份） |
+| 安全组 | 放行 22（SSH）、80/443（HTTP/S） |
+
+### 2.1 安装 Docker（阿里云 Linux 3 示例）
+
+```bash
+sudo yum install -y docker docker-compose-plugin
+sudo systemctl enable --now docker
+sudo usermod -aG docker $USER   # 重新登录后生效
+docker --version
+docker compose version
+```
 
 ---
 
-## 3. 首次部署（完整步骤）
+## 3. 首次部署
 
-### 3.1 登录服务器并安装依赖
-
-```bash
-# 更新系统
-sudo yum update -y
-
-# 编译 better-sqlite3 所需工具
-sudo yum groupinstall -y "Development Tools"
-sudo yum install -y git nginx sqlite
-
-# 安装 Node.js 22（推荐 NodeSource）
-curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash -
-sudo yum install -y nodejs
-
-node -v   # 应 >= v20.19
-npm -v
-```
-
-### 3.2 创建运行用户与目录
+### 3.1 拉取代码
 
 ```bash
-# 专用系统用户（可选但推荐）
-sudo useradd -r -m -d /opt/maofu-crm -s /sbin/nologin maofu || true
-
-# 代码目录
 sudo mkdir -p /opt/maofu-crm
 sudo chown -R $USER:$USER /opt/maofu-crm
-
-# 数据目录（数据库持久化）
-sudo mkdir -p /var/lib/maofu-crm
-sudo mkdir -p /var/backups/maofu-crm
-sudo chown -R $USER:$USER /var/lib/maofu-crm /var/backups/maofu-crm
-```
-
-### 3.3 拉取代码
-
-```bash
 cd /opt/maofu-crm
 git clone https://github.com/ranmannic/maofu-crm.git .
-# 若已有仓库：git pull origin main
 ```
 
-### 3.4 配置环境变量
+### 3.2 配置环境变量
 
 ```bash
-cp .env.example .env
+cp .env.docker.example .env
 nano .env
 ```
 
-生产环境 `.env` 示例：
+**必改项：**
 
 ```env
-DATABASE_URL="file:/var/lib/maofu-crm/prod.db"
-JWT_SECRET="请替换为至少32位随机字符串"
+JWT_SECRET=替换为 openssl rand -base64 32 生成的值
+INIT_DB=true          # 首次部署空数据卷设为 true
+RUN_SYNC=false
+APP_PORT=3000
 ```
 
-生成随机 JWT 密钥：
+生成 JWT 密钥：
 
 ```bash
 openssl rand -base64 32
 ```
 
-### 3.5 安装依赖并构建
+### 3.3 构建并启动
+
+**方式 A：仅应用容器**（宿主机已有 Nginx / 负载均衡反代 3000 端口）
 
 ```bash
-cd /opt/maofu-crm
-npm ci          # 比 npm install 更适合生产，严格按 lock 文件安装
-npm run build   # 含 prisma generate + next build
+docker compose up -d --build
 ```
 
-### 3.6 初始化数据库（仅首次）
-
-**推荐：使用仓库内置初始化数据**（含当前业务样例：客户、订单、跟进记录、业绩等）
+**方式 B：应用 + 内置 Nginx 容器**（直接对外 80 端口）
 
 ```bash
-# 1. 确保表结构与 migration 一致（空库或新库）
-npx prisma migrate deploy
-
-# 2. 从 prisma/init.db 复制完整初始化数据
-npm run db:init
-
-# 3. 重新生成 Client 并确认业绩记录完整（init.db 已含大部分数据，此步可补漏）
-npx prisma generate
-npm run db:sync-performance
-npm run db:sync-customer-status
+docker compose --profile nginx up -d --build
 ```
 
-> `prisma/init.db` 为随代码提交的 SQLite 快照，**仅用于首次部署空库**。生产环境已有业务数据时**切勿**执行 `npm run db:init`，否则会覆盖全部数据。
-
-**备选：仅写入演示账号与最小样例**（无完整业务数据时）
+### 3.4 验证
 
 ```bash
-npx prisma db push
-npm run db:seed
-npm run db:sync-performance
-npm run db:sync-customer-status
-```
-
-> ⚠️ **生产环境切勿再次执行 `npm run db:init` / `npm run db:seed` / `npm run db:reset`**，否则会覆盖或清空业务数据。详见 [第 7 节](#7-生产数据保护与迁移策略)。
-
-### 3.7 使用 PM2 启动
-
-```bash
-# 全局安装 PM2
-sudo npm install -g pm2
-
-# 使用项目自带配置（可按需修改 deploy/ecosystem.config.cjs 中的路径）
-pm2 start deploy/ecosystem.config.cjs
-pm2 save
-pm2 startup    # 按提示执行输出的命令，实现开机自启
-```
-
-验证：
-
-```bash
-pm2 status
+docker compose ps
+docker compose logs -f app --tail 50
 curl -I http://127.0.0.1:3000/login
 ```
 
-### 3.8 配置 Nginx
+浏览器访问 `http://服务器IP:3000`（或 Nginx 80 端口）。
 
-```bash
-sudo cp deploy/nginx-maofu-crm.conf.example /etc/nginx/conf.d/maofu-crm.conf
-sudo nano /etc/nginx/conf.d/maofu-crm.conf   # 修改 server_name 为实际域名
+### 3.5 宿主机 Nginx 反代（可选）
 
-sudo nginx -t
-sudo systemctl enable nginx
-sudo systemctl restart nginx
+若使用方式 A，在宿主机配置：
+
+```nginx
+# /etc/nginx/conf.d/maofu-crm.conf
+server {
+    listen 80;
+    server_name your-domain.com;
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
 ```
 
-### 3.9 配置 HTTPS（推荐）
+HTTPS 推荐使用 certbot 或阿里云证书服务。
 
-```bash
-# 阿里云 Linux 3 可使用 certbot
-sudo yum install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d your-domain.com
+### 3.6 首次初始化说明
+
+容器启动时 `entrypoint.sh` 会：
+
+1. 若数据卷为空且 `INIT_DB=true` → 从 `prisma/init.db` 复制内置业务快照
+2. 执行 `npx prisma migrate deploy` 同步表结构
+3. 若 `RUN_SYNC=true` → 执行业绩与客户状态回填
+
+**首次部署完成后**，请将 `.env` 中改为：
+
+```env
+INIT_DB=false
 ```
 
-### 3.10 修改默认密码
+> ⚠️ **已有业务数据的环境切勿设 `INIT_DB=true`**，否则会覆盖数据卷中的 `prod.db`。
 
-登录 `https://your-domain.com`，使用演示账号 `admin / 123456` 登录后，**立即在「账号管理」中修改所有默认密码**。
+### 3.7 修改默认密码
+
+登录后使用演示账号 `admin / 123456`，**立即在「账号管理」修改全部默认密码**。
 
 ---
 
-## 4. 环境变量说明
+## 4. 环境变量
 
 | 变量 | 必填 | 说明 |
 |------|------|------|
-| `DATABASE_URL` | 是 | SQLite 路径，生产必须用绝对路径，如 `file:/var/lib/maofu-crm/prod.db` |
-| `JWT_SECRET` | 是 | 会话签名密钥，生产环境必须强随机，更换后所有用户需重新登录 |
+| `JWT_SECRET` | 是 | 会话签名密钥，至少 32 位随机字符串 |
+| `INIT_DB` | 首次 | `true` 时空数据卷从 `prisma/init.db` 初始化；之后必须为 `false` |
+| `RUN_SYNC` | 否 | `true` 时每次启动执行业绩/客户状态回填（升级时可临时开启） |
+| `APP_PORT` | 否 | 宿主机映射端口，默认 `3000` |
+| `NGINX_HTTP_PORT` | 否 | Nginx profile 对外端口，默认 `80` |
 
----
+容器内固定：
 
-## 5. 进程管理与 Nginx
-
-### 常用 PM2 命令
-
-```bash
-pm2 status                  # 查看状态
-pm2 logs maofu-crm          # 查看日志
-pm2 restart maofu-crm       # 重启应用
-pm2 stop maofu-crm          # 停止
+```env
+DATABASE_URL=file:/data/prod.db
 ```
 
-### 日志位置
-
-- PM2 日志：`~/.pm2/logs/`
-- Nginx 访问日志：`/var/log/nginx/access.log`
-- Nginx 错误日志：`/var/log/nginx/error.log`
+数据库文件位于 Docker 命名卷 `maofu-crm-data`，与镜像、代码目录分离。
 
 ---
 
-## 6. 后续版本更新部署
-
-每次发布新版本，请严格按以下顺序操作：
+## 5. 日常运维
 
 ```bash
 cd /opt/maofu-crm
 
-# ── 第 1 步：备份数据库（必做）──
-chmod +x scripts/backup-db.sh
-./scripts/backup-db.sh /var/lib/maofu-crm/prod.db /var/backups/maofu-crm
+# 查看状态
+docker compose ps
 
-# ── 第 2 步：拉取新代码 ──
-git fetch origin
-git checkout main
-git pull origin main
+# 查看日志
+docker compose logs -f app
+docker compose logs -f nginx   # 若启用了 nginx profile
 
-# ── 第 3 步：安装依赖 ──
-npm ci
+# 重启
+docker compose restart app
 
-# ── 第 4 步：数据库结构迁移（见第 7 节）──
-# 若本次更新包含 prisma/schema.prisma 变更，执行其一：
-npx prisma migrate deploy    # 推荐：有正式 migration 文件时
-# 或
-npx prisma db push           # 仅当开发侧尚未生成 migration、且已确认变更安全时
+# 停止 / 启动
+docker compose down
+docker compose up -d
+```
 
-npx prisma generate
+### 容器内执行维护命令
 
-# ── 第 5 步：构建 ──
-npm run build
+```bash
+# 业绩回填
+docker compose exec app npx tsx prisma/sync-performance.ts
 
-# ── 第 6 步：重启服务 ──
-pm2 restart maofu-crm
+# 成交客户状态同步
+docker compose exec app npx tsx prisma/sync-customer-status.ts
 
-# ── 第 7 步：业绩与客户状态回填（含 PerformanceRecord / 成交客户的版本升级后执行）──
-npm run db:sync-performance
-npm run db:sync-customer-status
+# 查看 migration 状态
+docker compose exec app npx prisma migrate status
+```
 
-# ── 第 8 步：验证 ──
+> ⚠️ **禁止**在生产环境执行 `db:init` / `db:seed` / `db:reset`（会覆盖或清空数据）。
+
+---
+
+## 6. 版本更新
+
+每次发布新版本：
+
+```bash
+cd /opt/maofu-crm
+
+# 1. 备份数据库（必做，见第 8 节）
+./scripts/backup-docker-db.sh
+
+# 2. 拉取新代码
+git fetch origin && git pull origin main
+
+# 3. 重建镜像并滚动重启
+docker compose build --no-cache
+docker compose up -d
+
+# 4. 若本次含 schema 变更或业绩/跟进模块升级，执行回填
+docker compose exec app npx tsx prisma/sync-performance.ts
+docker compose exec app npx tsx prisma/sync-customer-status.ts
+
+# 5. 验证
+docker compose logs app --tail 50
 curl -I http://127.0.0.1:3000/login
-pm2 logs maofu-crm --lines 50
 ```
 
 ### 更新检查清单
 
-- [ ] 已备份 `prod.db`
-- [ ] 已阅读本次更新的 CHANGELOG / commit 说明
-- [ ] 确认是否涉及 `prisma/schema.prisma` 变更
-- [ ] **未**执行 `db:seed` / `db:reset`
-- [ ] 已执行 `npx prisma migrate deploy`（或 `db push`）+ `npx prisma generate`
-- [ ] 构建成功、PM2 运行正常
-- [ ] 若升级含业绩/退款模块：已执行 `npm run db:sync-performance`
-- [ ] 若升级含客户跟进模块（v0.5+）：已执行 `npm run db:sync-customer-status`
-- [ ] 登录并抽查：客户列表、订单列表、首页统计明细（业绩总额/未收款/已收款）、账期核销页（待核销 + 已结清）、**客户跟进**页
+- [ ] 已备份数据卷中的 `prod.db`
+- [ ] 已阅读本次 commit / 版本说明
+- [ ] 确认是否涉及 `prisma/schema.prisma` 变更（entrypoint 会自动 `migrate deploy`）
+- [ ] **未**设置 `INIT_DB=true`（除非明确要重置空库）
+- [ ] 镜像重建成功、`docker compose ps` 显示 healthy
+- [ ] v0.3+ 升级：已执行 `sync-performance`
+- [ ] v0.5+ 升级：已执行 `sync-customer-status`
+- [ ] 抽查：首页统计、订单、账期核销、**客户跟进**
 
-### 6.1 两种更新路径
+### 6.1 临时开启启动时自动回填
 
-| 场景 | 数据库命令 |
-|------|------------|
-| 生产一直使用 `migrate deploy` 跟踪 migration | `npx prisma migrate deploy` |
-| 生产此前仅用 `db push`、migration 历史与库不一致 | 备份后 `npx prisma db push` |
-
-两种路径之后均需：
-
-```bash
-npx prisma generate
-npm run build
-pm2 restart maofu-crm
-npm run db:sync-performance   # 回填历史业绩/核销业绩，首页统计依赖此步骤
-npm run db:sync-customer-status   # 将有收款订单的客户标记为成交客户
-```
-
-> 若 `migrate deploy` 报 migration 冲突，**不要**强行 reset；改用 `db push` 或联系维护人员处理。
-
-### 6.2 版本升级标准流程（含数据结构变更）
-
-适用于本次及后续含 Prisma schema 变更的发布：
-
-```bash
-cd /opt/maofu-crm
-./scripts/backup-db.sh /var/lib/maofu-crm/prod.db /var/backups/maofu-crm
-
-git pull origin main
-npm ci
-
-# 1. 同步表结构（二选一，见 6.1）
-npx prisma migrate deploy
-# 或：npx prisma db push
-
-# 2. 重新生成 Client（必须，否则 API 报 Unknown field）
-npx prisma generate
-
-# 3. 构建并重启
-npm run build
-pm2 restart maofu-crm
-
-# 4. 初始化/回填业务数据（不修改账号、客户、产品、渠道本体）
-npm run db:sync-performance
-npm run db:sync-customer-status
-
-# 5. 验证
-curl -I http://127.0.0.1:3000/login
-```
-
-**说明：**
-
-| 命令 | 作用 | 是否覆盖业务主数据 |
-|------|------|-------------------|
-| `db:sync-performance` | 从核销记录/已收款订单回填 `PerformanceRecord`、补全核销业绩字段 | 否，仅补业绩记录 |
-| `db:sync-customer-status` | 将有 PAID/PARTIAL 收款订单的客户设为「成交客户」 | 否，仅更新 `customerStatus` |
-| `db:init` | 从 `prisma/init.db` 覆盖目标库为内置初始化快照 | ⚠️ **会覆盖全部数据**，仅空库首次部署 |
-| `db:export-init` | 将当前库导出为 `prisma/init.db`（维护人员更新初始化包时用） | 开发侧操作 |
-| `db:seed` | 写入最小演示账号与样例数据 | ⚠️ 会 upsert 演示配置，生产禁用 |
-| `db:clear-orders` | 清空全部订单及账期库存 | 仅保留账号/客户/产品/渠道，生产慎用 |
-
-> **重要**：`schema` 变更后必须 `prisma generate` + **重启 PM2**，否则首页/账期页可能出现 500（Prisma Client 与数据库不一致）。
+在 `.env` 中设置 `RUN_SYNC=true`，执行 `docker compose up -d` 一次，完成后改回 `false`。
 
 ---
 
-## 7. 生产数据保护与迁移策略
-
-这是本系统最容易出事故的部分，请仔细阅读。
+## 7. 生产数据保护与迁移
 
 ### 7.1 核心原则
 
 | 原则 | 说明 |
 |------|------|
-| **数据库与代码分离** | `prod.db` 放在 `/var/lib/maofu-crm/`，不提交 Git、不随代码更新覆盖 |
-| **先备份再变更** | 任何 `migrate` / `db push` 前必须备份 |
-| **生产禁止 seed/reset** | `npm run db:seed` 仅用于空库初始化；`db:reset` 会清空全部数据 |
-| **软删除即数据保留** | 客户、订单删除均为软删除（`deletedAt`），历史订单不因客户删除而丢失 |
-| **迁移可回滚** | 保留备份 + 上一版代码 tag，便于回滚 |
+| **数据在 Volume 中** | `prod.db` 存于 `maofu-crm-data` 卷，重建镜像/容器不丢数据 |
+| **先备份再更新** | 每次 `git pull` + 重建镜像前备份 |
+| **INIT_DB 仅首次** | 空库首次部署用 `INIT_DB=true`，之后永久 `false` |
+| **禁止 seed/reset** | 勿在容器内执行 `db:seed` / `db:reset` / `db:init` |
+| **单实例 SQLite** | 不要水平扩展多个写实例挂载同一库 |
 
-### 7.2 两种数据库变更方式对比
+### 7.2 Migration 机制
 
-| 方式 | 命令 | 适用场景 | 风险 |
-|------|------|----------|------|
-| **Migration（推荐）** | `prisma migrate deploy` | 生产标准流程；有版本化 SQL 文件 | 低，可审计、可重复 |
-| **DB Push** | `prisma db push` | 开发环境快速同步；小型 additive 变更 | 中，无历史 migration 记录 |
+容器每次启动自动执行 `npx prisma migrate deploy`。  
+开发侧变更 schema 后需提交 `prisma/migrations/` 到 Git，线上拉代码重建镜像即可。
 
-**推荐工作流（开发 → 生产）：**
+### 7.3 版本特性与回填命令
 
-```bash
-# 开发机：schema 变更后生成 migration
-npx prisma migrate dev --name describe_your_change
+| 版本 | 关键变更 | 升级后额外命令 |
+|------|----------|----------------|
+| v0.3+ | 业绩按收款时间、退款 | `sync-performance` |
+| v0.4+ | 订单赠品、账期已结清 | 通常仅需 migrate |
+| v0.5+ | 客户跟进、线索/成交状态 | `sync-customer-status` + `sync-performance`（若首页无数据） |
 
-# 提交 migration 文件到 Git
-git add prisma/migrations/
-git commit -m "db: add order deletedAt field"
+详细字段说明见历史版本记录；当前仓库版本 **v0.5.0**。
 
-# 生产机：仅 deploy，不 dev、不 seed
-./scripts/backup-db.sh /var/lib/maofu-crm/prod.db /var/backups/maofu-crm
-npx prisma migrate deploy
-npm run build
-pm2 restart maofu-crm
-```
+### 7.4 生产允许 / 禁止的命令
 
-### 7.3 常见 schema 变更类型与处理
-
-#### 新增字段（带默认值）
-
-例如新增 `Order.shippingFee`、`Order.deletedAt`：
-
-- Prisma migration 会自动 `ALTER TABLE ADD COLUMN`
-- **现有行自动获得默认值**，业务数据不丢失
-- 部署：`migrate deploy` → `build` → `restart`
-
-#### 新增枚举值
-
-例如 `PaymentStatus` 增加 `PARTIAL`：
-
-- SQLite 通常需重建表，Prisma 会生成安全 SQL
-- **必须先备份**；部署后检查历史订单的付款状态显示是否正常
-
-#### 渠道结构变更（两级分类）
-
-- 旧一级渠道不会自动删除；seed 脚本会迁移客户到新渠道
-- **生产环境不要跑 seed**；应在管理后台手动调整渠道，或在维护窗口执行经过评审的 SQL/脚本
-
-#### 账期核销与产品规格（v0.2+）
-
-新增表：`CustomerInventory`、`OrderCreditLine`、`CreditReconciliationRecord`；`Order` 增加 `creditStatus`、坏账字段；`ProductSpec` 增加 `bottlesPerUnit`（折合瓶数）。
-
-- 部署后**无需 seed**：打开「账期核销」页会自动补全符合条件的部分付款 / 未付款已发货订单
-- 已有产品规格 `bottlesPerUnit` 默认为 1；整箱等规格请在「产品管理」中设置折合瓶数
-- 若生产库此前仅用 `db push` 同步、未跑过 migration，见下方 [6.1 节](#61-两种更新路径)
-
-#### 业绩按收款时间 & 退款（v0.3+）
-
-新增：
-
-- `Order`：`refundStatus`、`refundAmount`、`refundedAt`
-- `PerformanceRecord` 表：按收款/核销时间记录业绩（`COLLECT` / `REFUND`）
-- `CreditReconciliationRecord`：`performanceAmount`、`paidAt`
-
-**生产升级步骤（在 migrate deploy 之后）：**
-
-```bash
-npm run db:sync-performance
-pm2 restart maofu-crm
-```
-
-该命令会：
-
-1. 从已有核销记录的 `detail` 回填 `performanceAmount`
-2. 为历史已收款/已核销订单生成 `PerformanceRecord`
-3. **不修改**客户、账号、产品、渠道、订单本体数据
-
-首页统计、退款业绩、账期核销「计入业绩」均依赖 `PerformanceRecord`；升级后若首页无数据或报 500，请确认已执行上述命令且 PM2 已重启。
-
-#### 订单赠品 & 账期已结清查询（v0.4+）
-
-新增：
-
-- `OrderItem.isGift`：赠品单价为 0，不计入业绩，成本照常计入
-- Migration：`20260624120000_order_item_gift`
-- 首页业绩总额含未收款业绩，支持明细查询
-- 账期核销页支持「已结清」历史订单查询（`view=settled`）
-- 核销付款：按规格单价自动累加已收金额；未付款时禁止核销
-
-**生产升级步骤（在 migrate deploy 之后）：**
-
-```bash
-npx prisma migrate deploy    # 应用 isGift 字段 migration
-npx prisma generate
-npm run build
-pm2 restart maofu-crm
-npm run db:sync-performance    # 若从旧版升级且首页业绩异常
-```
-
-**验证要点：**
-
-1. 创建订单时可勾选「赠品」，订单金额与业绩不含赠品
-2. 首页「业绩总额」「未收款业绩」可点击查看明细
-3. 账期核销页切换「已结清」，可按客户/订单号查询历史结清记录
-4. 核销付款弹窗显示规格单价，填写核销数量后已收金额自动更新
-
-#### 客户跟进管理（v0.5+）
-
-新增：
-
-- `Customer.followUpStatus` / `abandonedAt` / `abandonReason`：跟进中 / 已放弃
-- `Customer.customerStatus`：`LEAD`（线索）/ `CLOSED`（成交）；收款后自动成交
-- `Customer.followUpNotes`：客户描述备注
-- `CustomerFollowUpRecord`：跟进记录（时间、内容、下次计划、下次跟进时间）
-- 侧边栏「客户跟进」（管理员、销售）；管理员默认勾选「只显示成交客户」
-- Migration：
-  - `20260624140000_customer_follow_up`
-  - `20260624150000_customer_status`
-  - `20260624160000_customer_follow_up_notes`
-
-**生产升级步骤（在 migrate deploy 之后）：**
-
-```bash
-npx prisma migrate deploy
-npx prisma generate
-npm run build
-pm2 restart maofu-crm
-npm run db:sync-customer-status    # 历史已收款客户 → 成交客户
-npm run db:sync-performance        # 若首页业绩异常
-```
-
-**验证要点：**
-
-1. 「客户跟进」列表可见客户；点击客户名查看历史跟进（分页 10 条/页）与备注
-2. 新增跟进保存后弹窗自动关闭；待跟进/逾期客户有显著标识
-3. 客户管理可查看/手动修改客户状态（管理员）
-4. 管理员首页默认「本月」统计，数据不为 0（当月有订单/业绩时）
-
-**首次部署初始化数据：**
-
-仓库提供 `prisma/init.db`（当前业务快照），空库执行 `npm run db:init` 即可，无需 `db:seed`。
-
-#### 仅清空订单（保留主数据）
-
-维护场景（如测试环境重置订单、生产清账前已备份）：
-
-```bash
-./scripts/backup-db.sh /var/lib/maofu-crm/prod.db /var/backups/maofu-crm
-npm run db:clear-orders
-```
-
-清空范围：全部订单、订单行、发货、审计、账期行、核销记录、业绩记录、客户账期库存。  
-**保留**：User、Customer、Product、ProductSpec、ChannelType。
-
-#### 重命名 / 删除字段
-
-- **高风险**：可能导致数据丢失
-- 应分两步：先加新字段并双写 → 迁移数据 → 再删旧字段
-- 生产环境删除字段前务必确认无业务依赖
-
-### 7.4 什么命令可以在生产执行 / 禁止执行
-
-| 命令 | 生产环境 |
-|------|----------|
-| `npm run db:seed` | ❌ 禁止（会 upsert 演示数据，可能覆盖配置） |
-| `npm run db:init` | ❌ 禁止（会覆盖为 init.db 快照） |
-| `npm run db:reset` | ❌ 禁止（清空全部数据） |
-| `npm run db:sync-performance` | ✅ 升级后推荐（回填业绩，不改主数据） |
-| `npm run db:sync-customer-status` | ✅ v0.5+ 升级后推荐（同步成交客户状态） |
-| `npm run db:clear-orders` | ⚠️ 仅维护窗口、已备份；清空全部订单 |
-| `npx prisma migrate deploy` | ✅ 推荐 |
-| `npx prisma db push` | ⚠️ 谨慎，仅 additive 小变更且已备份 |
-| `npx prisma generate` | ✅ 安全 |
-| `npm run build` | ✅ 安全 |
-| `./scripts/backup-db.sh` | ✅ 强烈推荐 |
-
-### 7.5 零停机更新建议（可选）
-
-本系统为单实例 SQLite，无法真正多实例写扩展。更新时：
-
-1. 选择业务低峰期（如凌晨）
-2. `pm2 stop maofu-crm` → 备份 → 迁移 → 构建 → `pm2 start maofu-crm`
-3. 停机窗口通常 1～3 分钟
-
-若需更短停机，可先 `build` 完成后再短暂 stop/start。
+| 命令 | Docker 生产环境 |
+|------|-----------------|
+| `docker compose exec app npx tsx prisma/sync-performance.ts` | ✅ 推荐 |
+| `docker compose exec app npx tsx prisma/sync-customer-status.ts` | ✅ v0.5+ 推荐 |
+| `docker compose exec app npm run db:init` | ❌ 覆盖全部数据 |
+| `docker compose exec app npm run db:seed` | ❌ 禁止 |
+| `docker compose exec app npm run db:reset` | ❌ 禁止 |
 
 ---
 
 ## 8. 备份与恢复
 
-### 8.1 手动备份
+### 8.1 手动备份（推荐脚本）
 
 ```bash
-./scripts/backup-db.sh /var/lib/maofu-crm/prod.db /var/backups/maofu-crm
+chmod +x scripts/backup-docker-db.sh
+./scripts/backup-docker-db.sh ./backups
 ```
 
-### 8.2 定时自动备份（crontab）
+脚本会从 `maofu-crm-data` 卷复制 `prod.db` 并 gzip 压缩。
+
+### 8.2 定时备份（crontab）
 
 ```bash
 crontab -e
 ```
 
-添加（每天凌晨 3 点备份，保留 30 天）：
-
 ```cron
-0 3 * * * /opt/maofu-crm/scripts/backup-db.sh /var/lib/maofu-crm/prod.db /var/backups/maofu-crm >> /var/log/maofu-backup.log 2>&1
+0 3 * * * /opt/maofu-crm/scripts/backup-docker-db.sh /var/backups/maofu-crm >> /var/log/maofu-backup.log 2>&1
 ```
 
-### 8.3 异地备份（强烈建议）
-
-- 使用阿里云 OSS：`ossutil cp` 定期上传 `/var/backups/maofu-crm/*.gz`
-- 或挂载云盘快照策略
-
-### 8.4 恢复数据库
+### 8.3 恢复数据库
 
 ```bash
-pm2 stop maofu-crm
+cd /opt/maofu-crm
+docker compose down
 
-# 解压备份
-gunzip -c /var/backups/maofu-crm/prod_YYYYMMDD_HHMMSS.db.gz > /var/lib/maofu-crm/prod.db
+# 解压备份到临时文件
+gunzip -c /var/backups/maofu-crm/prod_YYYYMMDD_HHMMSS.db.gz > /tmp/prod.db
 
-pm2 start maofu-crm
+# 写回数据卷
+docker run --rm \
+  -v maofu-crm-data:/data \
+  -v /tmp/prod.db:/backup/prod.db:ro \
+  alpine sh -c "cp /backup/prod.db /data/prod.db"
+
+docker compose up -d
 ```
 
-恢复后请验证订单数、客户数与关键业务数据。
+恢复后验证客户数、订单数与关键业务。
+
+### 8.4 异地备份
+
+定期将 `/var/backups/maofu-crm/*.gz` 上传至阿里云 OSS 或云盘快照。
 
 ---
 
 ## 9. 回滚方案
 
-若新版本上线后出现严重问题：
-
 ```bash
 cd /opt/maofu-crm
 
-# 1. 停止服务
-pm2 stop maofu-crm
+# 1. 停止
+docker compose down
 
-# 2. 回滚代码到上一版本
-git log --oneline -5          # 查看 commit
+# 2. 回滚代码
+git log --oneline -5
 git checkout <上一版本commit或tag>
 
-# 3. 若数据库已被 migrate 破坏，恢复备份（见 8.4）
-#    若仅代码问题、数据库未变，可跳过此步
+# 3. 若数据库 migration 不可逆，恢复备份（见 8.3）
 
-# 4. 重新安装与构建
-npm ci
-npm run build
-
-# 5. 启动
-pm2 start maofu-crm
+# 4. 重建并启动
+docker compose build
+docker compose up -d
 ```
-
-> 若新版本执行了**不可逆**的数据库 migration（如删列），仅靠代码回滚不够，**必须恢复备份**。
 
 ---
 
 ## 10. 常见问题
 
-### Q1：构建时报 `Prisma only supports Node.js versions 20.19+`
-
-Node 版本过低。执行：
+### Q1：容器启动后立即退出
 
 ```bash
-curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash -
-sudo yum install -y nodejs
+docker compose logs app
 ```
 
-### Q2：`better-sqlite3` 编译失败
+常见原因：`JWT_SECRET` 未设置、migration 失败、端口被占用。
 
-确保已安装编译工具：
+### Q2：页面 502 / 无法访问
 
 ```bash
-sudo yum groupinstall -y "Development Tools"
-npm rebuild better-sqlite3
+docker compose ps
+curl -I http://127.0.0.1:3000/login
+docker compose logs app --tail 100
 ```
 
-### Q3：页面 502 Bad Gateway
+确认 healthcheck 通过、安全组已放行端口。
+
+### Q3：更新后 API 500 / Unknown field
+
+entrypoint 已执行 migrate；若仍报错：
 
 ```bash
-pm2 status                    # 确认进程在运行
-pm2 logs maofu-crm --lines 100
-curl http://127.0.0.1:3000/login  # 直连 Next.js
-sudo nginx -t && sudo systemctl status nginx
+docker compose build --no-cache
+docker compose up -d
+docker compose exec app npx prisma migrate status
 ```
 
-### Q4：更新后 API 报 `Unknown field` / Prisma 校验错误 / 首页 500
+### Q4：首页数据为 0
 
-通常是 **Prisma Client 未重新生成** 或 **进程未重启**：
+1. 管理员首页默认「本月」统计，确认当月有订单/业绩
+2. 执行 `sync-performance` 回填历史业绩
+
+### Q5：客户跟进页无数据
+
+确认已拉取 v0.5+ 代码并重建镜像；检查日志是否有 migration 错误。
+
+### Q6：如何查看数据库文件
 
 ```bash
-npx prisma migrate deploy   # 或 db push
-npx prisma generate
-npm run build
-pm2 restart maofu-crm
-npm run db:sync-performance
+docker volume inspect maofu-crm-data
+docker compose exec app ls -la /data/
 ```
 
-### Q4b：首页无业绩数据 / 核销记录业绩显示 NaN
+### Q7：better-sqlite3 相关错误
 
-历史订单未生成 `PerformanceRecord` 或核销业绩未回填：
-
-```bash
-npm run db:sync-performance
-pm2 restart maofu-crm
-```
-
-刷新首页（切换「本月」查看）和账期核销页即可。
-
-### Q5：管理员删除客户失败
-
-已修复为软删除。若仍失败，检查 PM2 日志；确保未使用旧版硬删除逻辑。
-
-### Q6：数据库文件权限错误
-
-```bash
-sudo chown -R $(whoami):$(whoami) /var/lib/maofu-crm
-chmod 600 /var/lib/maofu-crm/prod.db
-```
-
-### Q7：账期核销页无数据 / 部分付款订单未出现
-
-打开账期核销页时会自动同步符合条件的订单。若仍缺失：
-
-1. 确认订单为**部分付款**，或**未付款且已发货**
-2. 确认订单未结清（已全额收款的不会显示）
-3. 重启应用确保 Prisma Client 已更新（见 Q4）
-
-### Q8：未核销瓶数统计不准
-
-在「产品管理 → 编辑规格」中设置**折合瓶数**（如整箱 6 瓶填 `6`）。
-
-### Q9：账期核销「已结清」无记录
-
-仅 `creditStatus = SETTLED` 的订单会出现在已结清视图。若订单已全额收款但状态未更新，请在账期页对待核销订单完成核销付款结清，或检查 PM2 日志。
-
-### Q10：开发环境 schema 变更后 API 500
-
-本地 `npm run dev` 若报 `Unknown field`，重启开发服务器并执行 `npx prisma generate`。生产环境务必 `migrate deploy` + `generate` + `pm2 restart`。
+镜像构建阶段已安装编译依赖；若自行修改 Dockerfile，需保留 `python3 make g++`。
 
 ---
 
-## 附录：目录结构（生产推荐）
+## 附录 A：PM2 传统部署
+
+不使用 Docker 时，可参考以下要点（完整步骤见 Git 历史或自行维护）：
+
+- Node.js **22.x** + PM2 + 宿主机 Nginx
+- 数据库路径：`/var/lib/maofu-crm/prod.db`
+- 首次初始化：`npx prisma migrate deploy` → `npm run db:init`
+- 更新：`git pull` → `npm ci` → `migrate deploy` → `npm run build` → `pm2 restart`
+
+配置文件：`deploy/ecosystem.config.cjs`、`deploy/nginx-maofu-crm.conf.example`
+
+---
+
+## 附录 B：目录结构
 
 ```
-/opt/maofu-crm/              # 应用代码（git 管理）
-├── .env                     # 环境变量（不提交 Git）
+/opt/maofu-crm/
+├── Dockerfile
+├── docker-compose.yml
+├── docker/
+│   └── entrypoint.sh
+├── .env                    # 从 .env.docker.example 复制（不提交 Git）
 ├── deploy/
-│   ├── ecosystem.config.cjs
-│   └── nginx-maofu-crm.conf.example
+│   ├── nginx-docker.conf   # Compose nginx profile
+│   └── nginx-maofu-crm.conf.example  # 宿主机 Nginx
 ├── prisma/
-│   ├── schema.prisma
-│   ├── init.db                # 内置初始化数据库快照（首次 db:init 用）
-│   ├── init-db.ts
-│   ├── export-init-db.ts
+│   ├── init.db             # 首次 INIT_DB 用快照
 │   └── migrations/
 └── scripts/
-    ├── backup-db.sh
-    └── (npm scripts: db:init, db:sync-performance, db:sync-customer-status, db:clear-orders)
+    └── backup-docker-db.sh
 
-/var/lib/maofu-crm/
-└── prod.db                  # 生产数据库（持久化，不随 git pull 变化）
-
-/var/backups/maofu-crm/
-└── prod_*.db.gz             # 自动/手动备份
+Docker Volume: maofu-crm-data → /data/prod.db
 ```
 
 ---
 
-## 附录：演示账号（首次 db:init 或 seed 后）
+## 附录 C：演示账号
 
 | 角色 | 用户名 | 初始密码 |
 |------|--------|----------|
@@ -738,8 +472,8 @@ chmod 600 /var/lib/maofu-crm/prod.db
 
 **上线后务必修改全部默认密码。**
 
-`db:init` 内置数据含 6 位客户、2 笔订单、跟进记录及业绩样例，可直接用于演示与验收。
+`INIT_DB=true` 首次启动后，内置数据含 6 位客户、2 笔订单、跟进记录及业绩样例。
 
 ---
 
-如有问题，请在 GitHub Issues 反馈：https://github.com/ranmannic/maofu-crm/issues
+GitHub Issues：https://github.com/ranmannic/maofu-crm/issues
