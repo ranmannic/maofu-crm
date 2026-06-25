@@ -40,11 +40,19 @@ export async function middleware(request: NextRequest) {
     const role = payload.role as Role;
 
     if (
-      pathname.startsWith("/products") ||
       pathname.startsWith("/users") ||
       pathname.startsWith("/channels")
     ) {
       if (role !== "ADMIN") {
+        if (pathname.startsWith("/api/")) {
+          return NextResponse.json({ error: "无权限" }, { status: 403 });
+        }
+        return NextResponse.redirect(new URL("/", request.url));
+      }
+    }
+
+    if (pathname.startsWith("/products")) {
+      if (role !== "ADMIN" && role !== "OPERATIONS") {
         if (pathname.startsWith("/api/")) {
           return NextResponse.json({ error: "无权限" }, { status: 403 });
         }

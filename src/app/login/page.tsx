@@ -94,11 +94,6 @@ export default function LoginPage() {
           <Button type="submit" className="w-full" disabled={loading}>
             {loading ? "登录中..." : "登录"}
           </Button>
-
-          <div className="text-xs text-muted text-center pt-2 border-t border-border">
-            <p>演示账号（密码均为 123456）</p>
-            <p className="mt-1">管理员 admin · 销售 sales01 · 职能 ops01</p>
-          </div>
         </form>
       </div>
     </div>

@@ -38,7 +38,23 @@ interface ReconciliationRecord {
   paidAt: string | null;
   userName: string;
   createdAt: string;
+  reviewStatus: "PENDING" | "APPROVED" | "REJECTED";
+  reviewedByName: string | null;
+  reviewedAt: string | null;
+  rejectReason: string | null;
   items: { productName: string; specName: string; quantity: number; isGift?: boolean }[];
+}
+
+const REVIEW_STATUS_LABELS: Record<ReconciliationRecord["reviewStatus"], string> = {
+  PENDING: "待审核",
+  APPROVED: "已通过",
+  REJECTED: "已驳回",
+};
+
+function orderHasPendingReview(order: CreditOrder) {
+  return (order.reconciliationRecords ?? []).some(
+    (rec) => rec.reviewStatus === "PENDING"
+  );
 }
 
 interface CreditOrder {
@@ -109,7 +125,15 @@ function isCreditOrderFullySettled(order: CreditOrder) {
 }
 
 export function CreditPage({ user }: { user: SessionUser }) {
-  const canEdit = ["OPERATIONS", "ADMIN"].includes(user.role);
+  const [canEdit, setCanEdit] = useState(
+    ["OPERATIONS", "ADMIN"].includes(user.role)
+  );
+  const [canReview, setCanReview] = useState(
+    ["OPERATIONS", "ADMIN"].includes(user.role)
+  );
+  const [canSubmitReconciliation, setCanSubmitReconciliation] = useState(
+    user.role === "SALES"
+  );
   const [stats, setStats] = useState<CreditStats | null>(null);
   const [customers, setCustomers] = useState<CreditCustomer[]>([]);
   const [loading, setLoading] = useState(true);
@@ -153,6 +177,9 @@ export function CreditPage({ user }: { user: SessionUser }) {
       setStats(data.stats ?? null);
       setCustomers(data.customers);
       setSettledOrderCount(data.settledOrderCount ?? 0);
+      setCanEdit(data.canEdit ?? false);
+      setCanReview(data.canReview ?? false);
+      setCanSubmitReconciliation(data.canSubmitReconciliation ?? false);
     }
     setLoading(false);
   }, [appliedQ, appliedOrderNo, appliedView]);
@@ -160,6 +187,15 @@ export function CreditPage({ user }: { user: SessionUser }) {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const q = params.get("orderNo")?.trim();
+    if (q) {
+      setOrderNoQ(q);
+      setAppliedOrderNo(q);
+    }
+  }, []);
 
   function handleSearch() {
     setAppliedQ(customerQ);
@@ -271,6 +307,39 @@ export function CreditPage({ user }: { user: SessionUser }) {
       return;
     }
     setPayModalOpen(false);
+    if (data.pending) {
+      alert("核销申请已提交，等待职能或管理员审核");
+    }
+    await load();
+    setSaving(false);
+  }
+
+  async function handleReview(
+    recordId: string,
+    action: "approve" | "reject"
+  ) {
+    let rejectReason: string | undefined;
+    if (action === "reject") {
+      if (!confirm("确定驳回该核销申请？")) return;
+      rejectReason = window.prompt("驳回原因（可选）") ?? undefined;
+    } else if (!confirm("确定审核通过该核销申请？通过后将更新订单收款并计入业绩。")) {
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    const res = await fetch(`/api/credit/reconciliation/${recordId}/review`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, rejectReason }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setError(data.error || "操作失败");
+      setSaving(false);
+      return;
+    }
+    setReconcileHistoryOpen(false);
     await load();
     setSaving(false);
   }
@@ -305,7 +374,8 @@ export function CreditPage({ user }: { user: SessionUser }) {
         <h1 className="text-2xl font-serif font-bold">账期核销管理</h1>
         <p className="text-muted text-sm mt-1 font-serif">
           部分收款客户的库存核销、付款跟进与坏账处理
-          {!canEdit && "（只读）"}
+          {canSubmitReconciliation && "（销售提交核销申请，需审核后生效）"}
+          {!canEdit && !canSubmitReconciliation && "（只读）"}
         </p>
       </div>
 
@@ -493,6 +563,11 @@ export function CreditPage({ user }: { user: SessionUser }) {
                                         : "超1月未结清"}
                                     </Badge>
                                   )}
+                                {!isSettledView && orderHasPendingReview(o) && (
+                                  <Badge variant="warning" className="ml-2">
+                                    核销待审核
+                                  </Badge>
+                                )}
                               </CardTitle>
                             </div>
                           </div>
@@ -567,9 +642,15 @@ export function CreditPage({ user }: { user: SessionUser }) {
                               <Button
                                 size="sm"
                                 variant="secondary"
+                                className={
+                                  canReview && orderHasPendingReview(o)
+                                    ? "animate-pulse border-amber-400 bg-amber-50 text-amber-900 hover:bg-amber-100"
+                                    : undefined
+                                }
                                 onClick={() => openReconcileHistory(o)}
                               >
                                 查看核销记录
+                                {canReview && orderHasPendingReview(o) && " · 待审核"}
                               </Button>
                             )}
                             <Button
@@ -599,6 +680,15 @@ export function CreditPage({ user }: { user: SessionUser }) {
                                 </Button>
                               </>
                             )}
+                            {canSubmitReconciliation &&
+                              !isSettledView &&
+                              o.creditStatus !== "BAD_DEBT" &&
+                              !orderHasPendingReview(o) && (
+                                <Button size="sm" onClick={() => openPayment(o)}>
+                                  <Wallet className="h-3 w-3 mr-1" />
+                                  提交核销申请
+                                </Button>
+                              )}
                           </div>
                         </CardContent>
                       </Card>
@@ -614,7 +704,7 @@ export function CreditPage({ user }: { user: SessionUser }) {
       <Modal
         open={payModalOpen}
         onClose={() => setPayModalOpen(false)}
-        title={`核销付款 · ${selectedOrder?.orderNo || ""}`}
+        title={`${canSubmitReconciliation ? "提交核销申请" : "核销付款"} · ${selectedOrder?.orderNo || ""}`}
         className="sm:max-w-2xl"
       >
         {selectedOrder && (
@@ -739,7 +829,7 @@ export function CreditPage({ user }: { user: SessionUser }) {
             {error && <p className="text-sm text-red-700">{error}</p>}
             <OrderVouchersPanel
               orderId={selectedOrder.id}
-              canEdit={canEdit}
+              canEdit={canEdit || canSubmitReconciliation}
               compact
             />
           </div>
@@ -749,7 +839,11 @@ export function CreditPage({ user }: { user: SessionUser }) {
             取消
           </Button>
           <Button onClick={handlePaymentSave} disabled={saving}>
-            {saving ? "保存中..." : "确认核销"}
+            {saving
+              ? "保存中..."
+              : canSubmitReconciliation
+                ? "提交审核"
+                : "确认核销"}
           </Button>
         </ModalFooter>
       </Modal>
@@ -762,7 +856,7 @@ export function CreditPage({ user }: { user: SessionUser }) {
       >
         <OrderVouchersPanel
           orderId={voucherOrder?.id ?? null}
-          canEdit={canEdit}
+          canEdit={canEdit || canSubmitReconciliation}
         />
         <ModalFooter>
           <Button variant="secondary" onClick={() => setVoucherModalOpen(false)}>
@@ -875,8 +969,21 @@ export function CreditPage({ user }: { user: SessionUser }) {
                   key={rec.id}
                   className="border border-border rounded-sm p-3 space-y-2"
                 >
-                  <div className="flex justify-between text-sm">
-                    <span className="font-medium">{rec.action}</span>
+                  <div className="flex justify-between text-sm items-center gap-2">
+                    <span className="font-medium flex items-center gap-2">
+                      {rec.action}
+                      <Badge
+                        variant={
+                          rec.reviewStatus === "PENDING"
+                            ? "warning"
+                            : rec.reviewStatus === "REJECTED"
+                              ? "danger"
+                              : "success"
+                        }
+                      >
+                        {REVIEW_STATUS_LABELS[rec.reviewStatus]}
+                      </Badge>
+                    </span>
                     <span className="text-muted">{formatDate(rec.createdAt)}</span>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
@@ -893,11 +1000,30 @@ export function CreditPage({ user }: { user: SessionUser }) {
                       {formatCurrency(rec.paidAmount)}
                     </div>
                     <div>
-                      <span className="text-muted">计入业绩：</span>
+                      <span className="text-muted">
+                        {rec.reviewStatus === "PENDING"
+                          ? "预计业绩："
+                          : "计入业绩："}
+                      </span>
                       <span className="text-wine">
-                        {formatCurrency(rec.performanceAmount)}
+                        {rec.reviewStatus === "REJECTED"
+                          ? "—"
+                          : formatCurrency(rec.performanceAmount)}
                       </span>
                     </div>
+                    {rec.reviewedByName && (
+                      <div>
+                        <span className="text-muted">审核人：</span>
+                        {rec.reviewedByName}
+                        {rec.reviewedAt && ` · ${formatDate(rec.reviewedAt)}`}
+                      </div>
+                    )}
+                    {rec.rejectReason && (
+                      <div className="col-span-2 text-red-700">
+                        <span className="text-muted">驳回原因：</span>
+                        {rec.rejectReason}
+                      </div>
+                    )}
                     {rec.paidAt && (
                       <div className="col-span-2">
                         <span className="text-muted">收款时间：</span>
@@ -925,6 +1051,26 @@ export function CreditPage({ user }: { user: SessionUser }) {
                         ))}
                       </tbody>
                     </table>
+                  )}
+                  {canReview && rec.reviewStatus === "PENDING" && (
+                    <div className="flex flex-wrap gap-2 pt-2">
+                      <Button
+                        size="sm"
+                        onClick={() => handleReview(rec.id, "approve")}
+                        disabled={saving}
+                      >
+                        <CheckCircle2 className="h-3 w-3 mr-1" />
+                        审核通过
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => handleReview(rec.id, "reject")}
+                        disabled={saving}
+                      >
+                        驳回
+                      </Button>
+                    </div>
                   )}
                 </div>
               ))

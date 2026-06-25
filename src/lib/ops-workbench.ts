@@ -1,15 +1,19 @@
 import { prisma } from "@/lib/prisma";
 import { SHIPPING_METHOD_LABELS } from "@/lib/constants";
 import type { ShippingMethod } from "@/generated/prisma/client";
-import type { OpsTask } from "@/lib/ops-workbench-types";
+import type { OpsTask, OpsTaskType } from "@/lib/ops-workbench-types";
 
 export type { OpsTask, OpsTaskType } from "@/lib/ops-workbench-types";
 export { getOpsTaskLabel } from "@/lib/ops-workbench-types";
 
-export async function getOpsWorkbench(page = 1, pageSize = 20) {
+export async function getOpsWorkbench(
+  page = 1,
+  pageSize = 20,
+  typeFilter?: OpsTaskType | null
+) {
   const baseWhere = { deletedAt: null };
 
-  const [unshipped, unpaid, partial, creditOrders] = await Promise.all([
+  const [unshipped, unpaid, pendingReviews, creditOrders] = await Promise.all([
     prisma.order.findMany({
       where: { ...baseWhere, isShipped: false },
       select: {
@@ -42,23 +46,25 @@ export async function getOpsWorkbench(page = 1, pageSize = 20) {
       orderBy: { orderedAt: "asc" },
       take: 50,
     }),
-    prisma.order.findMany({
+    prisma.creditReconciliationRecord.findMany({
       where: {
-        ...baseWhere,
-        OR: [{ paymentStatus: "PARTIAL" }, { paidAmount: { gt: 0 }, isPaid: false }],
-        paymentStatus: { not: "PAID" },
+        reviewStatus: "PENDING",
+        order: baseWhere,
       },
-      select: {
-        id: true,
-        orderNo: true,
-        customerName: true,
-        orderedAt: true,
-        totalAmount: true,
-        paidAmount: true,
-        paymentStatus: true,
-        creditStatus: true,
+      include: {
+        order: {
+          select: {
+            id: true,
+            orderNo: true,
+            customerName: true,
+            orderedAt: true,
+            totalAmount: true,
+            paidAmount: true,
+            paymentStatus: true,
+          },
+        },
       },
-      orderBy: { orderedAt: "asc" },
+      orderBy: { createdAt: "asc" },
       take: 50,
     }),
     prisma.order.findMany({
@@ -106,17 +112,17 @@ export async function getOpsWorkbench(page = 1, pageSize = 20) {
     });
   }
 
-  for (const o of partial) {
-    if (o.paymentStatus === "UNPAID" && o.paidAmount <= 0) continue;
+  for (const rec of pendingReviews) {
+    const o = rec.order;
     tasks.push({
-      type: "PARTIAL_PAYMENT",
+      type: "RECONCILE_REVIEW",
       priority: 3,
       orderId: o.id,
       orderNo: o.orderNo,
       customerName: o.customerName,
       orderedAt: o.orderedAt.toISOString(),
-      summary: `已收 ¥${o.paidAmount.toFixed(2)} / ¥${o.totalAmount.toFixed(2)}`,
-      href: `/orders?highlight=${o.id}`,
+      summary: `${rec.userName} 提交 · 申请收款 ¥${rec.paidAmount.toFixed(2)}`,
+      href: `/credit?orderNo=${encodeURIComponent(o.orderNo)}`,
     });
   }
 
@@ -141,7 +147,8 @@ export async function getOpsWorkbench(page = 1, pageSize = 20) {
       new Date(a.orderedAt).getTime() - new Date(b.orderedAt).getTime()
   );
 
-  const total = tasks.length;
+  const filtered = typeFilter ? tasks.filter((t) => t.type === typeFilter) : tasks;
+  const total = filtered.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const safePage = Math.min(Math.max(1, page), totalPages);
   const start = (safePage - 1) * pageSize;
@@ -150,15 +157,13 @@ export async function getOpsWorkbench(page = 1, pageSize = 20) {
     stats: {
       unshipped: unshipped.length,
       unpaid: unpaid.length,
-      partialPayment: partial.filter(
-        (o) => o.paymentStatus !== "UNPAID" || o.paidAmount > 0
-      ).length,
+      reconcileReview: pendingReviews.length,
       creditReconcile: creditOrders.filter((o) =>
         o.creditLines.some((l) => l.unreconciledQty > 0)
       ).length,
-      total,
+      total: tasks.length,
     },
-    tasks: tasks.slice(start, start + pageSize),
+    tasks: filtered.slice(start, start + pageSize),
     page: safePage,
     pageSize,
     total,

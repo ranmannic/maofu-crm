@@ -13,9 +13,14 @@ import { apiError, handleApiError } from "@/lib/api";
 import { parsePagination, paginatedResponse } from "@/lib/pagination";
 import { enrichOrderForList } from "@/lib/serializers";
 import { logOrderChange } from "@/lib/order-audit";
-import { processPaymentWithReconciliation, requiresPaymentReconciliation } from "@/lib/credit";
+import { processPaymentWithReconciliation, requiresPaymentReconciliation, ensureCreditOrderActive } from "@/lib/credit";
 import { formatShippingAddress } from "@/lib/address-parse";
 import { validateNonGiftDuplicateItems } from "@/lib/order-items";
+import {
+  buildOrderListWhere,
+  orderListInclude,
+  parseOrderListFilters,
+} from "@/lib/orders-query";
 import type { Prisma } from "@/generated/prisma/client";
 
 const orderItemSchema = z.object({
@@ -26,7 +31,7 @@ const orderItemSchema = z.object({
 });
 
 const deliverySchema = z.object({
-  method: z.enum(["PICKUP", "SELF_DELIVERY", "EXPRESS", "LOGISTICS"]),
+  method: z.enum(["PICKUP", "SELF_DELIVERY", "EXPRESS", "LOGISTICS", "ON_SITE_STOCKING"]),
   addressId: z.string().optional(),
 });
 
@@ -68,82 +73,14 @@ export async function GET(request: NextRequest) {
     const session = await requireSession();
     const { searchParams } = new URL(request.url);
     const { page, pageSize, skip, take } = parsePagination(searchParams);
-
-    const customerQ = searchParams.get("customer")?.trim();
-    const salesQ = searchParams.get("sales")?.trim();
-    const orderNoQ = searchParams.get("orderNo")?.trim();
-    const orderedStart = searchParams.get("orderedStart");
-    const orderedEnd = searchParams.get("orderedEnd");
-    const paidStart = searchParams.get("paidStart");
-    const paidEnd = searchParams.get("paidEnd");
-    const isPaid = searchParams.get("isPaid");
-    const paymentStatus = searchParams.get("paymentStatus");
-    const isShipped = searchParams.get("isShipped");
-    const showDeleted = searchParams.get("showDeleted") === "true";
-
-    const where: Prisma.OrderWhereInput = {};
-
-    if (session.role === "SALES") {
-      where.salesId = session.id;
-    }
-
-    if (showDeleted) {
-      where.deletedAt = { not: null };
-    } else {
-      where.deletedAt = null;
-    }
-
-    if (orderNoQ) {
-      where.orderNo = { contains: orderNoQ };
-    }
-
-    if (customerQ) {
-      where.OR = [
-        { customerName: { contains: customerQ } },
-        { customerId: { contains: customerQ } },
-      ];
-    }
-
-    if (salesQ && session.role !== "SALES") {
-      where.sales = {
-        OR: [{ name: { contains: salesQ } }, { id: { contains: salesQ } }],
-      };
-    }
-
-    if (orderedStart || orderedEnd) {
-      where.orderedAt = {};
-      if (orderedStart) where.orderedAt.gte = new Date(orderedStart + "T00:00:00");
-      if (orderedEnd) where.orderedAt.lte = new Date(orderedEnd + "T23:59:59");
-    }
-
-    if (paidStart || paidEnd) {
-      where.paidAt = {};
-      if (paidStart) where.paidAt.gte = new Date(paidStart + "T00:00:00");
-      if (paidEnd) where.paidAt.lte = new Date(paidEnd + "T23:59:59");
-    }
-
-    if (isPaid === "true") where.isPaid = true;
-    if (isPaid === "false") where.isPaid = false;
-    if (paymentStatus === "UNPAID" || paymentStatus === "PARTIAL" || paymentStatus === "PAID") {
-      where.paymentStatus = paymentStatus;
-    }
-    if (isShipped === "true") where.isShipped = true;
-    if (isShipped === "false") where.isShipped = false;
-
+    const filters = parseOrderListFilters(searchParams);
+    const where = buildOrderListWhere(session, filters);
     const isAdmin = session.role === "ADMIN";
 
     const [orders, total] = await Promise.all([
       prisma.order.findMany({
         where,
-        include: {
-          customer: {
-            select: { id: true, name: true, channel: { select: { name: true } } },
-          },
-          sales: { select: { id: true, name: true } },
-          handler: { select: { id: true, name: true } },
-          items: true,
-          shipping: true,
-        },
+        include: orderListInclude,
         orderBy: { orderedAt: "desc" },
         skip,
         take,
@@ -221,13 +158,23 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (body.delivery.method !== "PICKUP" && !body.delivery.addressId) {
+    if (
+      body.delivery.method !== "PICKUP" &&
+      body.delivery.method !== "ON_SITE_STOCKING" &&
+      !body.delivery.addressId
+    ) {
       return apiError("请选择客户收货地址");
     }
+
+    const isOnSiteStocking = body.delivery.method === "ON_SITE_STOCKING";
 
     let shippingCreate: Prisma.ShippingInfoCreateNestedOneWithoutOrderInput | undefined;
     if (body.delivery.method === "PICKUP") {
       shippingCreate = { create: { method: "PICKUP" } };
+    } else if (isOnSiteStocking) {
+      shippingCreate = {
+        create: { method: "ON_SITE_STOCKING", shippedAt: new Date() },
+      };
     } else {
       const addr = await prisma.customerShippingAddress.findFirst({
         where: { id: body.delivery.addressId!, customerId: customer.id },
@@ -263,6 +210,7 @@ export async function POST(request: NextRequest) {
           totalAmount !== calculatedAmount ? body.amountAdjustReason : null,
         productCostTotal,
         notes: body.notes,
+        isShipped: isOnSiteStocking,
         items: { create: orderItems },
         shipping: shippingCreate,
       },
@@ -280,6 +228,10 @@ export async function POST(request: NextRequest) {
       totalAmount,
       calculatedAmount,
     });
+
+    if (isOnSiteStocking) {
+      await ensureCreditOrderActive(order.id);
+    }
 
     if (
       body.payment &&

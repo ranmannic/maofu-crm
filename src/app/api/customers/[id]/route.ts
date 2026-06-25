@@ -7,6 +7,10 @@ import { serializeCustomer } from "@/lib/serializers";
 
 const updateSchema = z.object({
   name: z.string().min(1).optional(),
+  phone: z
+    .string()
+    .regex(/^1[3-9]\d{9}$/, "请输入有效的11位手机号")
+    .optional(),
   channelId: z.string().nullable().optional(),
   address: z.string().optional(),
   salesId: z.string().optional(),
@@ -70,6 +74,13 @@ export async function PATCH(
     if (body.channelId !== undefined) data.channelId = body.channelId;
     if (body.address !== undefined) data.address = body.address;
 
+    if (session.role === "ADMIN" && body.phone !== undefined) {
+      const duplicate = await prisma.customer.findFirst({
+        where: { phone: body.phone, id: { not: id }, deletedAt: null },
+      });
+      if (duplicate) return apiError("该手机号已被其他客户使用");
+      data.phone = body.phone;
+    }
     if (session.role === "ADMIN" && body.salesId) {
       data.salesId = body.salesId;
     }

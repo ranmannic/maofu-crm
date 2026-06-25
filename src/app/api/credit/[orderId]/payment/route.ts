@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireSession } from "@/lib/auth";
 import { apiError, handleApiError } from "@/lib/api";
-import { processPaymentWithReconciliation } from "@/lib/credit";
+import {
+  processPaymentWithReconciliation,
+  submitReconciliationForReview,
+} from "@/lib/credit";
 import { logOrderChange } from "@/lib/order-audit";
 import { prisma } from "@/lib/prisma";
 
@@ -27,14 +30,35 @@ export async function POST(
   { params }: { params: Promise<{ orderId: string }> }
 ) {
   try {
-    const session = await requireSession(["OPERATIONS", "ADMIN"]);
+    const session = await requireSession(["SALES", "OPERATIONS", "ADMIN"]);
     const { orderId } = await params;
     const body = bodySchema.parse(await request.json());
+    const reconcileItems = body.reconcileItems.filter((i) => i.quantity > 0);
+
+    if (session.role === "SALES") {
+      const result = await submitReconciliationForReview(
+        orderId,
+        body.payment,
+        reconcileItems,
+        session.id,
+        session.name
+      );
+      await logOrderChange(orderId, session.id, session.name, "提交核销申请", {
+        recordId: result.recordId,
+        payment: body.payment,
+        reconcileItems: body.reconcileItems,
+      });
+      return NextResponse.json({
+        success: true,
+        pending: true,
+        recordId: result.recordId,
+      });
+    }
 
     const synced = await processPaymentWithReconciliation(
       orderId,
       body.payment,
-      body.reconcileItems.filter((i) => i.quantity > 0),
+      reconcileItems,
       session.id,
       session.name
     );

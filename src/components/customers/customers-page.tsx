@@ -137,7 +137,7 @@ export function CustomersPage({ user }: { user: SessionUser }) {
     setEditing(c);
     setForm({
       name: c.name,
-      phone: "",
+      phone: isAdmin ? c.phone : "",
       channelId: c.channel?.id || "",
       address: c.address || "",
       customerStatus: c.customerStatus,
@@ -157,6 +157,7 @@ export function CustomersPage({ user }: { user: SessionUser }) {
           channelId: form.channelId || null,
           address: form.address,
           ...(isAdmin ? { customerStatus: form.customerStatus } : {}),
+          ...(isAdmin && editing ? { phone: form.phone } : {}),
         }
       : form;
 
@@ -385,7 +386,14 @@ export function CustomersPage({ user }: { user: SessionUser }) {
               <Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
             </div>
           )}
-          {editing && (
+          {editing && isAdmin && (
+            <div>
+              <Label>联系电话</Label>
+              <Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+              <p className="text-xs text-muted mt-1 font-serif">仅管理员可修改手机号</p>
+            </div>
+          )}
+          {editing && !isAdmin && (
             <p className="text-xs text-muted font-serif">手机号创建后不可修改</p>
           )}
           <div>

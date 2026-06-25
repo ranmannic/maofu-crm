@@ -1,7 +1,7 @@
 export type OpsTaskType =
   | "UNSHIPPED"
   | "UNPAID"
-  | "PARTIAL_PAYMENT"
+  | "RECONCILE_REVIEW"
   | "CREDIT_RECONCILE";
 
 export interface OpsTask {
@@ -18,7 +18,7 @@ export interface OpsTask {
 const TASK_LABELS: Record<OpsTaskType, string> = {
   UNSHIPPED: "待发货",
   UNPAID: "待收款",
-  PARTIAL_PAYMENT: "部分收款",
+  RECONCILE_REVIEW: "核销待审核",
   CREDIT_RECONCILE: "待核销",
 };
 

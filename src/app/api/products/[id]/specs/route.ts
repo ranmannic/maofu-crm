@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { requireSession } from "@/lib/auth";
+import { requireSession, PRODUCT_MANAGER_ROLES } from "@/lib/auth";
 import { apiError, handleApiError } from "@/lib/api";
 import type { SpecUnit } from "@/generated/prisma/client";
 
@@ -25,7 +25,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    await requireSession(["ADMIN"]);
+    await requireSession(PRODUCT_MANAGER_ROLES);
     const { id: productId } = await params;
     const data = specSchema.parse(await request.json());
 

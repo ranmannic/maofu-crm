@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireSession } from "@/lib/auth";
+import { requireSession, PRODUCT_MANAGER_ROLES } from "@/lib/auth";
 import { apiError, handleApiError } from "@/lib/api";
 import {
   deleteProductMediaFile,
@@ -13,7 +13,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    await requireSession(["ADMIN"]);
+    await requireSession(PRODUCT_MANAGER_ROLES);
     const { id } = await params;
 
     const spec = await prisma.productSpec.findUnique({
@@ -57,7 +57,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    await requireSession(["ADMIN"]);
+    await requireSession(PRODUCT_MANAGER_ROLES);
     const { id } = await params;
 
     const spec = await prisma.productSpec.findUnique({ where: { id } });

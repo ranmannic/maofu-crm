@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { requireSession } from "@/lib/auth";
+import { requireSession, PRODUCT_MANAGER_ROLES, canManageProducts } from "@/lib/auth";
 import { apiError, handleApiError } from "@/lib/api";
 import {
   serializeProductForAdmin,
@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
       },
       orderBy: { createdAt: "desc" },
     });
-    const forAdmin = session.role === "ADMIN";
+    const forAdmin = canManageProducts(session.role);
     return NextResponse.json(
       products.map((p) =>
         forAdmin ? serializeProductForAdmin(p) : serializeProductForSales(p)
@@ -48,7 +48,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    await requireSession(["ADMIN"]);
+    await requireSession(PRODUCT_MANAGER_ROLES);
     const body = productSchema.parse(await request.json());
 
     const product = await prisma.product.create({

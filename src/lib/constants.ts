@@ -17,13 +17,14 @@ export const SPEC_UNIT_OPTIONS: { value: SpecUnit; label: string }[] = [
 export const DEFAULT_PAGE_SIZE = 30;
 
 export const SHIPPING_METHOD_LABELS: Record<
-  "PICKUP" | "SELF_DELIVERY" | "EXPRESS" | "LOGISTICS",
+  "PICKUP" | "SELF_DELIVERY" | "EXPRESS" | "LOGISTICS" | "ON_SITE_STOCKING",
   string
 > = {
   PICKUP: "到厂自提",
   SELF_DELIVERY: "自行配送",
   EXPRESS: "快递发货",
   LOGISTICS: "物流发货",
+  ON_SITE_STOCKING: "现场铺货",
 };
 
 export const SHIPPING_METHOD_OPTIONS = (

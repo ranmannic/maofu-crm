@@ -50,9 +50,16 @@ export function calcReconcilePerformanceAmount(
 
 /** 解析核销记录应计入的业绩（兼容历史未回填数据） */
 export function resolveReconciliationPerformanceAmount(
-  rec: { performanceAmount?: number | null; detail?: string | null },
+  rec: {
+    performanceAmount?: number | null;
+    detail?: string | null;
+    reviewStatus?: string | null;
+  },
   orderItems: OrderItemRow[]
 ): number {
+  if (rec.reviewStatus === "PENDING" || rec.reviewStatus === "REJECTED") {
+    return 0;
+  }
   const stored = Number(rec.performanceAmount);
   if (Number.isFinite(stored) && stored > 0) return stored;
   const reconcileItems = parseReconcileItemsFromDetail(rec.detail ?? null);
@@ -160,6 +167,8 @@ async function syncReconciliationPerformanceRecords(salesId?: string) {
   );
 
   for (const rec of recs) {
+    if (rec.reviewStatus !== "APPROVED") continue;
+
     const performanceAmount = resolveReconciliationPerformanceAmount(
       rec,
       rec.order.items

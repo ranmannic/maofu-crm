@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireSession } from "@/lib/auth";
+import { requireSession, PRODUCT_MANAGER_ROLES } from "@/lib/auth";
 import { apiError, handleApiError } from "@/lib/api";
 import {
   saveProductImageFile,
@@ -14,7 +14,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    await requireSession(["ADMIN"]);
+    await requireSession(PRODUCT_MANAGER_ROLES);
     const { id } = await params;
     const product = await prisma.product.findUnique({ where: { id } });
     if (!product) return apiError("产品不存在", 404);
@@ -57,7 +57,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    await requireSession(["ADMIN"]);
+    await requireSession(PRODUCT_MANAGER_ROLES);
     const { id } = await params;
     const imageId = new URL(request.url).searchParams.get("imageId");
     if (!imageId) return apiError("缺少 imageId");

@@ -399,22 +399,46 @@ export async function markBadDebt(
         paidAmount: order.paidAmount,
         paymentStatus: order.paymentStatus,
         detail: JSON.stringify(data),
+        reviewStatus: "APPROVED",
       },
     });
   });
 }
 
-export async function processPaymentWithReconciliation(
-  orderId: string,
-  payment: {
-    paymentStatus: PaymentStatus;
-    paidAmount: number;
-    paidAt?: string;
-  },
-  reconcileItems: ReconcileItemInput[],
-  userId: string,
-  userName: string
-) {
+type ReconciliationPaymentInput = {
+  paymentStatus: PaymentStatus;
+  paidAmount: number;
+  paidAt?: string;
+};
+
+type ReconciliationApplyOptions = {
+  existingRecordId?: string;
+  reviewerId?: string;
+  reviewerName?: string;
+};
+
+function parseReconcileItemsFromRecordDetail(
+  detail: string | null | undefined
+): ReconcileItemInput[] {
+  if (!detail) return [];
+  try {
+    const parsed = JSON.parse(detail) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (i): i is ReconcileItemInput =>
+          typeof i === "object" &&
+          i !== null &&
+          typeof (i as ReconcileItemInput).orderItemId === "string" &&
+          typeof (i as ReconcileItemInput).quantity === "number"
+      )
+      .filter((i) => i.quantity > 0);
+  } catch {
+    return [];
+  }
+}
+
+async function loadOrderForReconciliation(orderId: string) {
   const order = await prisma.order.findUnique({
     where: { id: orderId },
     include: {
@@ -424,14 +448,24 @@ export async function processPaymentWithReconciliation(
   });
   if (!order) throw new Error("订单不存在");
   if (order.deletedAt) throw new Error("订单已删除");
+  return order;
+}
 
+function computeReconciliationPlan(
+  order: Awaited<ReturnType<typeof loadOrderForReconciliation>>,
+  payment: ReconciliationPaymentInput,
+  reconcileItems: ReconcileItemInput[]
+) {
   const synced = syncPaymentFields(
     payment.paymentStatus,
     payment.paidAmount,
     order.totalAmount
   );
 
-  if (reconcileItems.length > 0 && (synced.paymentStatus === "UNPAID" || synced.paidAmount <= 0)) {
+  if (
+    reconcileItems.length > 0 &&
+    (synced.paymentStatus === "UNPAID" || synced.paidAmount <= 0)
+  ) {
     throw new Error("未付款时不可核销产品数量");
   }
 
@@ -447,28 +481,7 @@ export async function processPaymentWithReconciliation(
     }
   }
 
-  if (
-    shouldActivateCredit({
-      paymentStatus: synced.paymentStatus,
-      isShipped: order.isShipped,
-      isPaid: synced.isPaid,
-      creditStatus: order.creditStatus,
-    })
-  ) {
-    await ensureCreditOrderActive(orderId, {
-      paymentStatus: synced.paymentStatus,
-      isPaid: synced.isPaid,
-    });
-  }
-
-  if (needsReconcile && reconcileItems.length > 0) {
-    await applyReconciliation(orderId, reconcileItems);
-  }
-
-  const paidAt = payment.paidAt
-    ? new Date(payment.paidAt)
-    : synced.paidAt;
-
+  const paidAt = payment.paidAt ? new Date(payment.paidAt) : synced.paidAt;
   const shippingFee = order.shippingFee ?? 0;
   const otherFee = order.otherFee ?? 0;
   const feeTotal = shippingFee + otherFee;
@@ -518,6 +531,137 @@ export async function processPaymentWithReconciliation(
           : null;
   }
 
+  return { synced, needsReconcile, performanceAmount, creditStatus, paidAt };
+}
+
+export async function submitReconciliationForReview(
+  orderId: string,
+  payment: ReconciliationPaymentInput,
+  reconcileItems: ReconcileItemInput[],
+  userId: string,
+  userName: string
+) {
+  const order = await loadOrderForReconciliation(orderId);
+  const plan = computeReconciliationPlan(order, payment, reconcileItems);
+
+  const existingPending = await prisma.creditReconciliationRecord.findFirst({
+    where: { orderId, reviewStatus: "PENDING" },
+  });
+  if (existingPending) {
+    throw new Error("该订单已有待审核的核销申请，请等待审核后再提交");
+  }
+
+  const record = await prisma.creditReconciliationRecord.create({
+    data: {
+      orderId,
+      customerId: order.customerId,
+      userId,
+      userName,
+      action: "RECONCILE",
+      paidAmount: plan.synced.paidAmount,
+      paymentStatus: plan.synced.paymentStatus,
+      performanceAmount: plan.performanceAmount,
+      paidAt: plan.synced.paymentStatus === "UNPAID" ? null : plan.paidAt,
+      detail:
+        reconcileItems.length > 0
+          ? JSON.stringify(reconcileItems)
+          : JSON.stringify({ directPayment: true }),
+      reviewStatus: "PENDING",
+    },
+  });
+
+  return { recordId: record.id, plan };
+}
+
+export async function approveReconciliationRecord(
+  recordId: string,
+  reviewerId: string,
+  reviewerName: string
+) {
+  const rec = await prisma.creditReconciliationRecord.findUnique({
+    where: { id: recordId },
+  });
+  if (!rec) throw new Error("核销记录不存在");
+  if (rec.reviewStatus !== "PENDING") {
+    throw new Error("该核销记录不在待审核状态");
+  }
+
+  const reconcileItems = parseReconcileItemsFromRecordDetail(rec.detail);
+  return processPaymentWithReconciliation(
+    rec.orderId,
+    {
+      paymentStatus: rec.paymentStatus,
+      paidAmount: rec.paidAmount,
+      paidAt: rec.paidAt?.toISOString(),
+    },
+    reconcileItems,
+    rec.userId,
+    rec.userName,
+    {
+      existingRecordId: recordId,
+      reviewerId,
+      reviewerName,
+    }
+  );
+}
+
+export async function rejectReconciliationRecord(
+  recordId: string,
+  reviewerId: string,
+  reviewerName: string,
+  rejectReason?: string
+) {
+  const rec = await prisma.creditReconciliationRecord.findUnique({
+    where: { id: recordId },
+  });
+  if (!rec) throw new Error("核销记录不存在");
+  if (rec.reviewStatus !== "PENDING") {
+    throw new Error("该核销记录不在待审核状态");
+  }
+
+  await prisma.creditReconciliationRecord.update({
+    where: { id: recordId },
+    data: {
+      reviewStatus: "REJECTED",
+      reviewedById: reviewerId,
+      reviewedByName: reviewerName,
+      reviewedAt: new Date(),
+      rejectReason: rejectReason?.trim() || null,
+    },
+  });
+}
+
+export async function processPaymentWithReconciliation(
+  orderId: string,
+  payment: ReconciliationPaymentInput,
+  reconcileItems: ReconcileItemInput[],
+  userId: string,
+  userName: string,
+  options?: ReconciliationApplyOptions
+) {
+  const order = await loadOrderForReconciliation(orderId);
+  const plan = computeReconciliationPlan(order, payment, reconcileItems);
+  const { synced, needsReconcile, performanceAmount, creditStatus, paidAt } =
+    plan;
+
+  if (
+    shouldActivateCredit({
+      paymentStatus: synced.paymentStatus,
+      isShipped: order.isShipped,
+      isPaid: synced.isPaid,
+      creditStatus: order.creditStatus,
+    })
+  ) {
+    await ensureCreditOrderActive(orderId, {
+      paymentStatus: synced.paymentStatus,
+      isPaid: synced.isPaid,
+    });
+  }
+
+  if (needsReconcile && reconcileItems.length > 0) {
+    await applyReconciliation(orderId, reconcileItems);
+  }
+
   await prisma.$transaction(async (tx) => {
     await tx.order.update({
       where: { id: orderId },
@@ -530,7 +674,25 @@ export async function processPaymentWithReconciliation(
       },
     });
 
-    if (reconcileItems.length > 0) {
+    let recId = "";
+
+    if (options?.existingRecordId) {
+      await tx.creditReconciliationRecord.update({
+        where: { id: options.existingRecordId },
+        data: {
+          paidAmount: synced.paidAmount,
+          paymentStatus: synced.paymentStatus,
+          performanceAmount,
+          paidAt: synced.paymentStatus === "UNPAID" ? null : paidAt,
+          reviewStatus: "APPROVED",
+          reviewedById: options.reviewerId,
+          reviewedByName: options.reviewerName,
+          reviewedAt: new Date(),
+          rejectReason: null,
+        },
+      });
+      recId = options.existingRecordId;
+    } else if (reconcileItems.length > 0) {
       const rec = await tx.creditReconciliationRecord.create({
         data: {
           orderId,
@@ -543,24 +705,31 @@ export async function processPaymentWithReconciliation(
           performanceAmount,
           paidAt: synced.paymentStatus === "UNPAID" ? null : paidAt,
           detail: JSON.stringify(reconcileItems),
+          reviewStatus: "APPROVED",
         },
       });
+      recId = rec.id;
+    }
 
-      if (
-        performanceAmount > 0 &&
-        synced.paymentStatus !== "UNPAID" &&
-        paidAt
-      ) {
-        await recordCollectPerformance(tx, {
-          orderId,
-          salesId: order.salesId,
-          amount: performanceAmount,
-          eventAt: paidAt,
-          reconciliationRecordId: rec.id,
-          detail: JSON.stringify(reconcileItems),
-        });
-      }
+    if (
+      recId &&
+      performanceAmount > 0 &&
+      synced.paymentStatus !== "UNPAID" &&
+      paidAt
+    ) {
+      await recordCollectPerformance(tx, {
+        orderId,
+        salesId: order.salesId,
+        amount: performanceAmount,
+        eventAt: paidAt,
+        reconciliationRecordId: recId,
+        detail:
+          reconcileItems.length > 0
+            ? JSON.stringify(reconcileItems)
+            : JSON.stringify({ directPayment: true }),
+      });
     } else if (
+      !options?.existingRecordId &&
       performanceAmount > 0 &&
       synced.paymentStatus !== "UNPAID" &&
       paidAt

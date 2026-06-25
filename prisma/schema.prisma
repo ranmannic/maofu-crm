@@ -58,6 +58,13 @@ enum ShippingMethod {
   SELF_DELIVERY
   EXPRESS
   LOGISTICS
+  ON_SITE_STOCKING
+}
+
+enum ReconciliationReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 enum OrderVoucherCategory {
@@ -345,19 +352,24 @@ model OrderCreditLine {
 }
 
 model CreditReconciliationRecord {
-  id                String        @id @default(cuid())
+  id                String                       @id @default(cuid())
   orderId           String
-  order             Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order             Order                        @relation(fields: [orderId], references: [id], onDelete: Cascade)
   customerId        String
   userId            String
   userName          String
   action            String
-  paidAmount        Float         @default(0)
-  paymentStatus     PaymentStatus @default(UNPAID)
-  performanceAmount Float         @default(0)
+  paidAmount        Float                        @default(0)
+  paymentStatus     PaymentStatus                @default(UNPAID)
+  performanceAmount Float                        @default(0)
   paidAt            DateTime?
   detail            String?
-  createdAt         DateTime      @default(now())
+  reviewStatus      ReconciliationReviewStatus   @default(APPROVED)
+  reviewedById      String?
+  reviewedByName    String?
+  reviewedAt        DateTime?
+  rejectReason      String?
+  createdAt         DateTime                     @default(now())
 
   performanceRecord PerformanceRecord?
 }

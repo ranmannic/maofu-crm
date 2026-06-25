@@ -179,6 +179,8 @@ export async function GET(request: NextRequest) {
       settledOrderCount,
       customers,
       canEdit: ["OPERATIONS", "ADMIN"].includes(session.role),
+      canReview: ["OPERATIONS", "ADMIN"].includes(session.role),
+      canSubmitReconciliation: session.role === "SALES",
     });
   } catch (error) {
     return handleApiError(error);
@@ -239,6 +241,10 @@ function serializeCreditOrder(
       userName: rec.userName,
       detail: rec.detail,
       createdAt: rec.createdAt,
+      reviewStatus: rec.reviewStatus,
+      reviewedByName: rec.reviewedByName,
+      reviewedAt: rec.reviewedAt,
+      rejectReason: rec.rejectReason,
       items: parseReconcileDetail(rec.detail, o.items),
     })),
   };

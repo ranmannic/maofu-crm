@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Plus, Eye, History, Search, Trash2, RotateCcw, Wallet, Truck, Paperclip, Share2 } from "lucide-react";
+import { Plus, Eye, History, Search, Trash2, RotateCcw, Wallet, Truck, Paperclip, Share2, MessageSquare, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -129,6 +129,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
   const canDelete = ["SALES", "ADMIN"].includes(user.role);
   const canManageOps = ["OPERATIONS", "ADMIN"].includes(user.role);
   const isAdmin = user.role === "ADMIN";
+  const canExportOrders = isAdmin || canManageOps;
 
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
@@ -166,6 +167,10 @@ export function OrdersPage({ user }: { user: SessionUser }) {
   const [paymentOrder, setPaymentOrder] = useState<Order | null>(null);
   const [shippingOrder, setShippingOrder] = useState<Order | null>(null);
   const [voucherOrder, setVoucherOrder] = useState<Order | null>(null);
+  const [notesPreview, setNotesPreview] = useState<{
+    orderNo: string;
+    notes: string;
+  } | null>(null);
 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -179,7 +184,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
     otherFee: 0,
     totalAmount: 0,
     amountAdjustReason: "",
-    shippingMethod: "PICKUP" as "PICKUP" | "SELF_DELIVERY" | "EXPRESS" | "LOGISTICS",
+    shippingMethod: "PICKUP" as "PICKUP" | "SELF_DELIVERY" | "EXPRESS" | "LOGISTICS" | "ON_SITE_STOCKING",
     shippingAddressId: "",
     items: [{ productSpecId: "", quantity: 1, isGift: false }],
   });
@@ -215,6 +220,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
   const [paymentError, setPaymentError] = useState("");
   const [shippingError, setShippingError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const loadOrders = useCallback(async () => {
     setLoading(true);
@@ -237,6 +243,28 @@ export function OrdersPage({ user }: { user: SessionUser }) {
 
   useEffect(() => { loadOrders(); }, [loadOrders]);
 
+  function openNotesPreview(order: Order) {
+    if (!order.notes?.trim()) return;
+    setNotesPreview({ orderNo: order.orderNo, notes: order.notes.trim() });
+  }
+
+  function renderNotesBadge(order: Order) {
+    if (!order.notes?.trim()) return null;
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          openNotesPreview(order);
+        }}
+        className="inline-flex items-center gap-0.5 text-amber-800 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 text-[10px] font-sans font-medium active:bg-amber-100"
+      >
+        <MessageSquare className="h-3 w-3 shrink-0" />
+        有备注
+      </button>
+    );
+  }
+
   function handleSearch() {
     setAppliedFilters({ ...filterDraft });
     setAppliedShowDeleted(draftShowDeleted);
@@ -249,6 +277,40 @@ export function OrdersPage({ user }: { user: SessionUser }) {
     setDraftShowDeleted(false);
     setAppliedShowDeleted(false);
     setPage(1);
+  }
+
+  async function handleExportExcel() {
+    setExporting(true);
+    try {
+      const params = new URLSearchParams();
+      Object.entries(appliedFilters).forEach(([k, v]) => {
+        if (v) params.set(k, v);
+      });
+      if (appliedShowDeleted) params.set("showDeleted", "true");
+
+      const res = await fetch(`/api/orders/export?${params}`);
+      if (!res.ok) {
+        const data = await res.json();
+        alert(data.error || "导出失败");
+        return;
+      }
+
+      const blob = await res.blob();
+      const disposition = res.headers.get("Content-Disposition") ?? "";
+      const match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+      const fileName = match
+        ? decodeURIComponent(match[1])
+        : `订单导出_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}.xlsx`;
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      link.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setExporting(false);
+    }
   }
 
   function getAllSpecs() {
@@ -542,6 +604,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
 
     if (
       createForm.shippingMethod !== "PICKUP" &&
+      createForm.shippingMethod !== "ON_SITE_STOCKING" &&
       !createForm.shippingAddressId
     ) {
       setError("请选择客户收货地址，或先在客户管理中维护收货信息");
@@ -575,7 +638,8 @@ export function OrdersPage({ user }: { user: SessionUser }) {
       delivery: {
         method: createForm.shippingMethod,
         addressId:
-          createForm.shippingMethod !== "PICKUP"
+          createForm.shippingMethod !== "PICKUP" &&
+          createForm.shippingMethod !== "ON_SITE_STOCKING"
             ? createForm.shippingAddressId
             : undefined,
       },
@@ -764,7 +828,10 @@ export function OrdersPage({ user }: { user: SessionUser }) {
         )}
       >
         <div className="flex items-start justify-between gap-2 mb-2">
-          <span className="font-mono text-xs font-semibold break-all">{o.orderNo}</span>
+          <span className="font-mono text-xs font-semibold break-all inline-flex items-center gap-1.5 flex-wrap">
+            {o.orderNo}
+            {renderNotesBadge(o)}
+          </span>
           {o.isDeleted && <Badge variant="warning">已删除</Badge>}
         </div>
         <dl className="space-y-1.5 text-sm">
@@ -837,6 +904,18 @@ export function OrdersPage({ user }: { user: SessionUser }) {
             <Plus className="h-4 w-4 mr-1" />
             新建订单
           </Button>
+          </div>
+        )}
+        {canExportOrders && (
+          <div className={canCreate ? "" : "page-header-actions"}>
+            <Button
+              variant="secondary"
+              onClick={handleExportExcel}
+              disabled={exporting}
+            >
+              <Download className="h-4 w-4 mr-1" />
+              {exporting ? "导出中..." : "导出 Excel"}
+            </Button>
           </div>
         )}
       </div>
@@ -1026,7 +1105,10 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                     {orders.map((o) => (
                       <tr key={o.id} className={`border-b border-border/40 ${o.isDeleted ? "opacity-60" : ""}`}>
                         <td className="py-3 font-mono text-xs">
-                          {o.orderNo}
+                          <span className="inline-flex items-center gap-1.5 flex-wrap">
+                            {o.orderNo}
+                            {renderNotesBadge(o)}
+                          </span>
                           {o.isDeleted && (
                             <Badge variant="warning" className="ml-1">已删除</Badge>
                           )}
@@ -1113,7 +1195,8 @@ export function OrdersPage({ user }: { user: SessionUser }) {
               ))}
             </Select>
           </div>
-          {createForm.shippingMethod !== "PICKUP" && (
+          {createForm.shippingMethod !== "PICKUP" &&
+            createForm.shippingMethod !== "ON_SITE_STOCKING" && (
             <div>
               <Label>收货地址 *</Label>
               {createForm.customerId ? (
@@ -1397,6 +1480,15 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                 <div><span className="text-muted">收款时间：</span>{formatDate(selected.paidAt)}</div>
               )}
             </div>
+
+            {selected.notes?.trim() && (
+              <div className="rounded-sm border border-amber-200 bg-amber-50 p-3">
+                <h4 className="font-serif font-medium text-amber-900 mb-1">订单备注</h4>
+                <p className="text-sm whitespace-pre-wrap text-amber-950">
+                  {selected.notes}
+                </p>
+              </div>
+            )}
 
             {selected.items.length > 0 && (
               <div>
@@ -1878,6 +1970,19 @@ export function OrdersPage({ user }: { user: SessionUser }) {
         />
         <ModalFooter>
           <Button variant="secondary" onClick={() => setVoucherModalOpen(false)}>
+            关闭
+          </Button>
+        </ModalFooter>
+      </Modal>
+
+      <Modal
+        open={!!notesPreview}
+        onClose={() => setNotesPreview(null)}
+        title={`订单备注 · ${notesPreview?.orderNo || ""}`}
+      >
+        <p className="text-sm whitespace-pre-wrap">{notesPreview?.notes}</p>
+        <ModalFooter>
+          <Button variant="secondary" onClick={() => setNotesPreview(null)}>
             关闭
           </Button>
         </ModalFooter>

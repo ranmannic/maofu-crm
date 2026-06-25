@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { requireSession } from "@/lib/auth";
+import { requireSession, PRODUCT_MANAGER_ROLES, canManageProducts } from "@/lib/auth";
 import { apiError, handleApiError } from "@/lib/api";
 import { serializeProductForAdmin } from "@/lib/product-serializers";
 
@@ -29,7 +29,7 @@ export async function GET(
       },
     });
     if (!product) return apiError("产品不存在", 404);
-    if (session.role === "ADMIN") {
+    if (canManageProducts(session.role)) {
       return NextResponse.json(serializeProductForAdmin(product));
     }
     const { serializeProductForSales } = await import("@/lib/product-serializers");
@@ -44,7 +44,7 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    await requireSession(["ADMIN"]);
+    await requireSession(PRODUCT_MANAGER_ROLES);
     const { id } = await params;
     const data = updateSchema.parse(await request.json());
 
@@ -70,7 +70,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    await requireSession(["ADMIN"]);
+    await requireSession(PRODUCT_MANAGER_ROLES);
     const { id } = await params;
     await prisma.product.delete({ where: { id } });
     return NextResponse.json({ success: true });

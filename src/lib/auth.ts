@@ -100,3 +100,10 @@ export const ROLE_LABELS: Record<Role, string> = {
   OPERATIONS: "职能",
   ADMIN: "管理员",
 };
+
+/** 可维护产品档案（产品管理页）的角色 */
+export const PRODUCT_MANAGER_ROLES: Role[] = ["ADMIN", "OPERATIONS"];
+
+export function canManageProducts(role: Role) {
+  return PRODUCT_MANAGER_ROLES.includes(role);
+}

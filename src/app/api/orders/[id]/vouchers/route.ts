@@ -48,7 +48,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await requireSession(["OPERATIONS", "ADMIN"]);
+    const session = await requireSession(["SALES", "OPERATIONS", "ADMIN"]);
     const { id: orderId } = await params;
     const access = await assertOrderAccess(orderId, session);
     if (access.error) return access.error;
