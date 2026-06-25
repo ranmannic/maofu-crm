@@ -9,7 +9,7 @@ import { Modal, ModalFooter } from "@/components/ui/modal";
 import { Input, Label, Select, Textarea, QtyInput } from "@/components/ui/input";
 import { FilterField } from "@/components/ui/filter-field";
 import { formatCurrency, formatDate } from "@/lib/utils";
-import { calcReconcilePaidAmount } from "@/lib/reconcile-ui";
+import { calcReconcilePaidAmount, allProductsFullyReconciled } from "@/lib/reconcile-ui";
 import { OrderVouchersPanel } from "@/components/orders/order-vouchers-panel";
 import type { SessionUser } from "@/lib/auth-types";
 
@@ -626,6 +626,7 @@ export function CreditPage({ user }: { user: SessionUser }) {
                   value={paymentForm.paymentStatus}
                   onChange={(e) => {
                     const status = e.target.value as "UNPAID" | "PARTIAL" | "PAID";
+                    const productsDone = allProductsFullyReconciled(selectedOrder.items);
                     if (status === "PAID") {
                       setPaymentForm({
                         ...paymentForm,
@@ -640,15 +641,17 @@ export function CreditPage({ user }: { user: SessionUser }) {
                       paidAmount:
                         status === "UNPAID"
                           ? 0
-                          : calcReconcilePaidAmount(
-                              selectedOrder.items.map((i) => ({
-                                id: i.id,
-                                unitPrice: i.unitPrice,
-                                isGift: i.isGift,
-                              })),
-                              selectedOrder.paidAmount,
-                              reconcileQty
-                            ),
+                          : productsDone
+                            ? selectedOrder.paidAmount
+                            : calcReconcilePaidAmount(
+                                selectedOrder.items.map((i) => ({
+                                  id: i.id,
+                                  unitPrice: i.unitPrice,
+                                  isGift: i.isGift,
+                                })),
+                                selectedOrder.paidAmount,
+                                reconcileQty
+                              ),
                     });
                   }}
                 >
@@ -679,6 +682,7 @@ export function CreditPage({ user }: { user: SessionUser }) {
                 )}
               </div>
             </div>
+            {!allProductsFullyReconciled(selectedOrder.items) && (
             <div>
               <Label>本次核销产品数量 *</Label>
               <p className="text-xs text-muted mb-2">
@@ -726,6 +730,12 @@ export function CreditPage({ user }: { user: SessionUser }) {
                 ))}
               </div>
             </div>
+            )}
+            {allProductsFullyReconciled(selectedOrder.items) && (
+              <p className="text-xs text-muted bg-paper border border-border rounded-sm p-3">
+                产品已全部核销，可直接设置收款金额（含运费及其它费用），无需再填核销数量。
+              </p>
+            )}
             {error && <p className="text-sm text-red-700">{error}</p>}
             <OrderVouchersPanel
               orderId={selectedOrder.id}

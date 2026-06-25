@@ -124,7 +124,10 @@ export async function PATCH(
 
     const existing = await prisma.order.findUnique({
       where: { id },
-      include: { shipping: true },
+      include: {
+        shipping: true,
+        creditLines: { select: { unreconciledQty: true } },
+      },
     });
     if (!existing) return apiError("订单不存在", 404);
 

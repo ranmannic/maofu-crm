@@ -62,7 +62,8 @@ export function CategoryPerformanceSection({
               />
             </div>
             <Card>
-              <CardContent className="table-scroll">
+              <CardContent>
+                <div className="table-scroll">
                 <table className="w-full text-sm ink-table">
                   <thead>
                     <tr className="border-b border-border text-left text-muted">
@@ -91,6 +92,7 @@ export function CategoryPerformanceSection({
                     ))}
                   </tbody>
                 </table>
+                </div>
               </CardContent>
             </Card>
           </div>

@@ -11,6 +11,13 @@ const specSchema = z.object({
   bottlesPerUnit: z.number().int().min(1).default(1),
   price: z.number().min(0),
   cost: z.number().min(0).default(0),
+  retailGuidePrice: z.number().min(0).nullable().optional(),
+  retailFloorPrice: z.number().min(0).nullable().optional(),
+  groupGuidePrice: z.number().min(0).nullable().optional(),
+  groupFloorPrice: z.number().min(0).nullable().optional(),
+  wholesaleGuidePrice: z.number().min(0).nullable().optional(),
+  wholesaleFloorPrice: z.number().min(0).nullable().optional(),
+  description: z.string().nullable().optional(),
 });
 
 export async function POST(

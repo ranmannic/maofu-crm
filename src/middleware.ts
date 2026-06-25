@@ -8,11 +8,18 @@ const SECRET = new TextEncoder().encode(
 
 const publicPaths = ["/login", "/api/auth/login"];
 
+function isPublicPath(pathname: string) {
+  if (publicPaths.some((p) => pathname === p)) return true;
+  if (pathname.startsWith("/share")) return true;
+  if (pathname.startsWith("/api/share")) return true;
+  return false;
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   if (
-    publicPaths.some((p) => pathname === p) ||
+    isPublicPath(pathname) ||
     pathname.startsWith("/_next") ||
     pathname.startsWith("/favicon")
   ) {
@@ -38,6 +45,15 @@ export async function middleware(request: NextRequest) {
       pathname.startsWith("/channels")
     ) {
       if (role !== "ADMIN") {
+        if (pathname.startsWith("/api/")) {
+          return NextResponse.json({ error: "无权限" }, { status: 403 });
+        }
+        return NextResponse.redirect(new URL("/", request.url));
+      }
+    }
+
+    if (pathname.startsWith("/workbench")) {
+      if (role !== "OPERATIONS") {
         if (pathname.startsWith("/api/")) {
           return NextResponse.json({ error: "无权限" }, { status: 403 });
         }

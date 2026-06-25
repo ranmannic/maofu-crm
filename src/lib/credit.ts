@@ -55,10 +55,18 @@ export function requiresPaymentReconciliation(
     paymentStatus: PaymentStatus;
     creditStatus?: CreditOrderStatus | null;
     paidAmount: number;
+    creditLines?: { unreconciledQty: number }[];
   },
   newPaymentStatus: PaymentStatus
 ): boolean {
   if (newPaymentStatus === "UNPAID") return false;
+  if (
+    order.creditLines &&
+    order.creditLines.length > 0 &&
+    order.creditLines.every((l) => l.unreconciledQty <= 0)
+  ) {
+    return false;
+  }
   if (newPaymentStatus === "PARTIAL") return true;
   if (order.paymentStatus !== "PARTIAL" && order.paidAmount <= 0) return false;
   return true;
@@ -409,7 +417,10 @@ export async function processPaymentWithReconciliation(
 ) {
   const order = await prisma.order.findUnique({
     where: { id: orderId },
-    include: { items: true },
+    include: {
+      items: true,
+      creditLines: { select: { unreconciledQty: true } },
+    },
   });
   if (!order) throw new Error("订单不存在");
   if (order.deletedAt) throw new Error("订单已删除");
@@ -460,6 +471,10 @@ export async function processPaymentWithReconciliation(
 
   const shippingFee = order.shippingFee ?? 0;
   const otherFee = order.otherFee ?? 0;
+  const feeTotal = shippingFee + otherFee;
+  const productsAllReconciled =
+    order.creditLines.length > 0 &&
+    order.creditLines.every((l) => l.unreconciledQty <= 0);
   const maxProductPerf =
     order.productAmount > 0
       ? order.productAmount
@@ -468,6 +483,13 @@ export async function processPaymentWithReconciliation(
   let performanceAmount = 0;
   if (needsReconcile && reconcileItems.length > 0) {
     performanceAmount = calcReconcilePerformanceAmount(order.items, reconcileItems);
+  } else if (
+    productsAllReconciled &&
+    synced.paidAmount > order.paidAmount &&
+    synced.paymentStatus !== "UNPAID"
+  ) {
+    const increment = synced.paidAmount - order.paidAmount;
+    performanceAmount = Math.round(Math.min(increment, feeTotal) * 100) / 100;
   } else if (synced.paymentStatus === "PAID" && synced.paidAmount > 0) {
     performanceAmount = maxProductPerf;
   } else if (synced.paymentStatus === "PARTIAL" && synced.paidAmount > 0) {

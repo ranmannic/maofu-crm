@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Plus, Pencil, Trash2, RotateCcw, ArrowRightLeft, Search, MapPin } from "lucide-react";
+import Link from "next/link";
+import { Plus, Pencil, Trash2, RotateCcw, ArrowRightLeft, Search, MapPin, Upload, Share2 } from "lucide-react";
 import { FilterField } from "@/components/ui/filter-field";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -300,7 +301,12 @@ export function CustomersPage({ user }: { user: SessionUser }) {
                       >
                         <td className="py-3 font-mono text-xs">{c.id.slice(0, 8)}…</td>
                         <td className="py-3 font-medium">
-                          {c.name}
+                          <Link
+                            href={`/customers/${c.id}`}
+                            className="text-wine hover:underline"
+                          >
+                            {c.name}
+                          </Link>
                           {c.isDeleted && (
                             <Badge variant="warning" className="ml-2">已删除</Badge>
                           )}

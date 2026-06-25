@@ -3,10 +3,17 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth";
 import { apiError, handleApiError } from "@/lib/api";
+import {
+  serializeProductForAdmin,
+  serializeProductForSales,
+} from "@/lib/product-serializers";
 
 const productSchema = z.object({
   name: z.string().min(1, "产品名称不能为空"),
   description: z.string().optional(),
+  alcoholContent: z.string().optional(),
+  aromaType: z.string().optional(),
+  origin: z.string().optional(),
   specs: z
     .array(
       z.object({
@@ -18,14 +25,22 @@ const productSchema = z.object({
     .optional(),
 });
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    await requireSession();
+    const session = await requireSession();
     const products = await prisma.product.findMany({
-      include: { specs: { orderBy: { createdAt: "asc" } } },
+      include: {
+        specs: { orderBy: { createdAt: "asc" } },
+        images: { orderBy: { sortOrder: "asc" } },
+      },
       orderBy: { createdAt: "desc" },
     });
-    return NextResponse.json(products);
+    const forAdmin = session.role === "ADMIN";
+    return NextResponse.json(
+      products.map((p) =>
+        forAdmin ? serializeProductForAdmin(p) : serializeProductForSales(p)
+      )
+    );
   } catch (error) {
     return handleApiError(error);
   }
@@ -40,6 +55,9 @@ export async function POST(request: NextRequest) {
       data: {
         name: body.name,
         description: body.description,
+        alcoholContent: body.alcoholContent,
+        aromaType: body.aromaType,
+        origin: body.origin,
         specs: body.specs
           ? { create: body.specs }
           : undefined,

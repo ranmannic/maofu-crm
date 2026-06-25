@@ -346,7 +346,8 @@ export function DashboardPage({ user }: { user: SessionUser }) {
             <CardHeader>
               <CardTitle className="font-serif">渠道数据统计</CardTitle>
             </CardHeader>
-            <CardContent className="table-scroll">
+            <CardContent>
+              <div className="table-scroll">
               <table className="w-full text-sm ink-table">
                 <thead>
                   <tr className="border-b border-border text-left text-muted">
@@ -378,6 +379,7 @@ export function DashboardPage({ user }: { user: SessionUser }) {
                   )}
                 </tbody>
               </table>
+              </div>
             </CardContent>
           </Card>
 
@@ -386,7 +388,8 @@ export function DashboardPage({ user }: { user: SessionUser }) {
               <CardHeader>
                 <CardTitle className="font-serif">销售业绩</CardTitle>
               </CardHeader>
-              <CardContent className="table-scroll">
+              <CardContent>
+                <div className="table-scroll">
                 <table className="w-full text-sm ink-table">
                   <thead>
                     <tr className="border-b border-border text-left text-muted">
@@ -415,6 +418,7 @@ export function DashboardPage({ user }: { user: SessionUser }) {
                     ))}
                   </tbody>
                 </table>
+                </div>
               </CardContent>
             </Card>
           )}

@@ -11,6 +11,13 @@ const specUpdateSchema = z.object({
   bottlesPerUnit: z.number().int().min(1).optional(),
   price: z.number().min(0).optional(),
   cost: z.number().min(0).optional(),
+  retailGuidePrice: z.number().min(0).nullable().optional(),
+  retailFloorPrice: z.number().min(0).nullable().optional(),
+  groupGuidePrice: z.number().min(0).nullable().optional(),
+  groupFloorPrice: z.number().min(0).nullable().optional(),
+  wholesaleGuidePrice: z.number().min(0).nullable().optional(),
+  wholesaleFloorPrice: z.number().min(0).nullable().optional(),
+  description: z.string().nullable().optional(),
 });
 
 export async function PATCH(

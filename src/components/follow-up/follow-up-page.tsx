@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import {
   Search,
   Phone,
@@ -581,11 +582,10 @@ export function FollowUpPage({ user }: { user: SessionUser }) {
                       >
                         <td className="py-3">
                           <div className="font-medium flex items-center gap-2 flex-wrap">
-                            <button
-                              type="button"
-                              onClick={() => openProfileModal(row)}
+                            <Link
+                              href={`/customers/${row.id}`}
                               className={cn(
-                                "hover:underline text-left",
+                                "hover:underline",
                                 row.birthdayReminderStatus !== "NONE" &&
                                   row.followUpStatus === "ACTIVE"
                                   ? "text-pink-700 font-semibold"
@@ -593,7 +593,7 @@ export function FollowUpPage({ user }: { user: SessionUser }) {
                               )}
                             >
                               {row.name}
-                            </button>
+                            </Link>
                             {row.birthdayReminderStatus !== "NONE" &&
                               row.followUpStatus === "ACTIVE" && (
                                 <Badge

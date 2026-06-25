@@ -153,13 +153,30 @@ model CustomerFollowUpRecord {
 }
 
 model Product {
-  id          String   @id @default(cuid())
-  name        String
-  description String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id             String   @id @default(cuid())
+  name           String
+  description    String?
+  alcoholContent String?
+  aromaType      String?
+  origin         String?
+  thumbnailKey   String?
+  shareToken     String?  @unique
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  specs ProductSpec[]
+  specs  ProductSpec[]
+  images ProductImage[]
+}
+
+model ProductImage {
+  id         String   @id @default(cuid())
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  storageKey String
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  @@index([productId, sortOrder])
 }
 
 model ProductSpec {
@@ -171,6 +188,14 @@ model ProductSpec {
   bottlesPerUnit Int @default(1)
   price     Float
   cost      Float    @default(0)
+  retailGuidePrice    Float?
+  retailFloorPrice    Float?
+  groupGuidePrice     Float?
+  groupFloorPrice     Float?
+  wholesaleGuidePrice Float?
+  wholesaleFloorPrice Float?
+  description       String?
+  thumbnailKey      String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -209,6 +234,7 @@ model Order {
   refundStatus       RefundStatus  @default(NONE)
   refundAmount       Float         @default(0)
   refundedAt         DateTime?
+  shareToken         String?       @unique
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 

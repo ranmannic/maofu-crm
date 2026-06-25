@@ -15,6 +15,7 @@ import { enrichOrderForList } from "@/lib/serializers";
 import { logOrderChange } from "@/lib/order-audit";
 import { processPaymentWithReconciliation, requiresPaymentReconciliation } from "@/lib/credit";
 import { formatShippingAddress } from "@/lib/address-parse";
+import { validateNonGiftDuplicateItems } from "@/lib/order-items";
 import type { Prisma } from "@/generated/prisma/client";
 
 const orderItemSchema = z.object({
@@ -52,10 +53,11 @@ const createOrderSchema = z.object({
         .object({
           orderItemId: z.string().optional(),
           productSpecId: z.string().optional(),
+          itemIndex: z.number().int().min(0).optional(),
           quantity: z.number().int().min(0),
         })
-        .refine((i) => i.orderItemId || i.productSpecId, {
-          message: "核销项需指定 orderItemId 或 productSpecId",
+        .refine((i) => i.orderItemId || i.productSpecId || i.itemIndex !== undefined, {
+          message: "核销项需指定 orderItemId、itemIndex 或 productSpecId",
         })
     )
     .optional(),
@@ -169,14 +171,19 @@ export async function POST(request: NextRequest) {
       return apiError("只能为自己的客户下单", 403);
     }
 
-    const specIds = body.items.map((i) => i.productSpecId);
+    const specIds = [...new Set(body.items.map((i) => i.productSpecId))];
     const specs = await prisma.productSpec.findMany({
       where: { id: { in: specIds } },
       include: { product: true },
     });
 
-    if (specs.length !== body.items.length) {
+    if (specs.length !== specIds.length) {
       return apiError("部分产品规格不存在");
+    }
+
+    const duplicateError = validateNonGiftDuplicateItems(body.items);
+    if (duplicateError) {
+      return apiError(duplicateError);
     }
 
     const specMap = new Map(specs.map((s) => [s.id, s]));
@@ -295,6 +302,13 @@ export async function POST(request: NextRequest) {
           .map((item) => {
             if (item.orderItemId) {
               return { orderItemId: item.orderItemId, quantity: item.quantity };
+            }
+            if (item.itemIndex !== undefined) {
+              const orderItem = order.items[item.itemIndex];
+              if (!orderItem) {
+                throw new Error("核销产品与订单明细不匹配");
+              }
+              return { orderItemId: orderItem.id, quantity: item.quantity };
             }
             const orderItem = order.items.find(
               (i) => i.productSpecId === item.productSpecId

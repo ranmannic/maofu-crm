@@ -233,6 +233,14 @@ input, select, textarea {
   width: 100%;
 }
 
+/* 弹窗内表格不使用负边距，避免贴边 */
+.form-fill .table-scroll {
+  margin-left: 0;
+  margin-right: 0;
+  padding-left: 0;
+  padding-right: 0;
+}
+
 .input-compact {
   width: 4rem;
   min-width: 4rem;

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Plus, Eye, History, Search, Trash2, RotateCcw, Wallet, Truck, Paperclip } from "lucide-react";
+import { Plus, Eye, History, Search, Trash2, RotateCcw, Wallet, Truck, Paperclip, Share2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +12,8 @@ import { FilterField } from "@/components/ui/filter-field";
 import { DEFAULT_PAGE_SIZE, SPEC_UNIT_LABELS, SHIPPING_METHOD_OPTIONS, SHIPPING_METHOD_LABELS } from "@/lib/constants";
 import { formatCurrency, formatDate, cn } from "@/lib/utils";
 import { formatShippingAddress } from "@/lib/address-parse";
-import { calcReconcilePaidAmount, calcCreateReconcilePaidAmount } from "@/lib/reconcile-ui";
+import { calcReconcilePaidAmount, calcCreateReconcilePaidAmount, allProductsFullyReconciled } from "@/lib/reconcile-ui";
+import { validateNonGiftDuplicateItems } from "@/lib/order-items";
 import { OrderVouchersPanel } from "@/components/orders/order-vouchers-panel";
 import type { SessionUser } from "@/lib/auth-types";
 import type { SpecUnit } from "@/generated/prisma/client";
@@ -186,7 +187,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
   const [productAmountPreview, setProductAmountPreview] = useState(0);
   const [calculatedPreview, setCalculatedPreview] = useState(0);
 
-  const [createReconcileQty, setCreateReconcileQty] = useState<Record<string, number>>({});
+  const [createReconcileQty, setCreateReconcileQty] = useState<Record<number, number>>({});
   const [createPaymentForm, setCreatePaymentForm] = useState({
     paymentStatus: "UNPAID" as "UNPAID" | "PARTIAL" | "PAID",
     paidAmount: 0,
@@ -412,8 +413,8 @@ export function OrdersPage({ user }: { user: SessionUser }) {
     }
   }
 
-  function updateCreateReconcileQty(productSpecId: string, quantity: number) {
-    const nextQty = { ...createReconcileQty, [productSpecId]: quantity };
+  function updateCreateReconcileQty(itemIndex: number, quantity: number) {
+    const nextQty = { ...createReconcileQty, [itemIndex]: quantity };
     setCreateReconcileQty(nextQty);
     if (createPaymentForm.paymentStatus === "PARTIAL") {
       const specPrices = new Map(
@@ -422,7 +423,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
       setCreatePaymentForm((prev) => ({
         ...prev,
         paidAmount: calcCreateReconcilePaidAmount(
-          createForm.items.filter((i) => i.productSpecId),
+          createForm.items,
           specPrices,
           nextQty
         ),
@@ -558,6 +559,13 @@ export function OrdersPage({ user }: { user: SessionUser }) {
         isGift: i.isGift,
       }));
 
+    const duplicateError = validateNonGiftDuplicateItems(items);
+    if (duplicateError) {
+      setError(duplicateError);
+      setSaving(false);
+      return;
+    }
+
     const body: Record<string, unknown> = {
       customerId: createForm.customerId,
       handlerId: createForm.handlerId || undefined,
@@ -586,11 +594,11 @@ export function OrdersPage({ user }: { user: SessionUser }) {
       };
       if (createPaymentForm.paymentStatus === "PARTIAL") {
         body.reconcileItems = createForm.items
-          .filter((i) => i.productSpecId && (createReconcileQty[i.productSpecId] ?? 0) > 0)
-          .map((i) => ({
-            productSpecId: i.productSpecId,
-            quantity: createReconcileQty[i.productSpecId] ?? 0,
-          }));
+          .map((i, idx) => ({
+            itemIndex: idx,
+            quantity: createReconcileQty[idx] ?? 0,
+          }))
+          .filter((i) => i.quantity > 0);
       }
     }
 
@@ -681,6 +689,26 @@ export function OrdersPage({ user }: { user: SessionUser }) {
       return;
     }
     await loadOrders();
+  }
+
+  async function shareOrder(order: Order) {
+    try {
+      const res = await fetch(`/api/orders/${order.id}/share`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || "生成分享链接失败");
+        return;
+      }
+      const url = data.shareUrl || `${window.location.origin}/share/order/${data.shareToken}`;
+      if (navigator.share) {
+        await navigator.share({ title: `订单 ${order.orderNo}`, url });
+      } else {
+        await navigator.clipboard.writeText(url);
+        alert("分享链接已复制（不含成本与毛利，客户手机号已脱敏）");
+      }
+    } catch {
+      alert("分享失败");
+    }
   }
 
   const specs = getAllSpecs();
@@ -1153,7 +1181,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                     items[idx].quantity = n || 1;
                     setCreateForm({ ...createForm, items });
                   }}
-                  className="w-20"
+                  className="input-compact"
                 />
                 <span className="text-sm text-muted w-8">{getUnitForItem(item.productSpecId)}</span>
                 <label className="flex items-center gap-1 text-sm text-muted whitespace-nowrap">
@@ -1174,7 +1202,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
               添加产品
             </Button>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-3">
             <div>
               <Label>产品金额</Label>
               <Input value={formatCurrency(productAmountPreview)} readOnly className="bg-paper" />
@@ -1239,7 +1267,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                           : status === "UNPAID"
                             ? 0
                             : calcCreateReconcilePaidAmount(
-                                createForm.items.filter((i) => i.productSpecId),
+                                createForm.items,
                                 new Map(getAllSpecs().map((s) => [s.id, s.price])),
                                 createReconcileQty
                               ),
@@ -1282,43 +1310,42 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                 <div>
                   <Label>核销产品数量 *</Label>
                   <div className="space-y-2 border border-border rounded-sm p-3 mt-1">
-                    {createForm.items
-                      .filter((i) => i.productSpecId)
-                      .map((item) => {
-                        const spec = specs.find((s) => s.id === item.productSpecId);
-                        return (
-                          <div
-                            key={item.productSpecId}
-                            className="flex flex-col gap-2 border-b border-border/40 pb-3 last:border-0 last:pb-0 sm:flex-row sm:items-center sm:gap-3"
-                          >
-                            <span className="min-w-0 flex-1 text-sm leading-snug">
-                              {spec?.label ?? item.productSpecId}
-                              {item.isGift && (
-                                <Badge variant="wine" className="ml-1 text-[10px] px-1 py-0">
-                                  赠品
-                                </Badge>
-                              )}
-                              <span className="block text-xs text-muted mt-0.5 sm:inline sm:mt-0 sm:ml-1">
-                                可核销 {item.quantity}
-                                {spec ? getUnitForItem(item.productSpecId) : ""}
-                              </span>
+                    {createForm.items.map((item, idx) => {
+                      if (!item.productSpecId) return null;
+                      const spec = specs.find((s) => s.id === item.productSpecId);
+                      return (
+                        <div
+                          key={idx}
+                          className="flex flex-col gap-2 border-b border-border/40 pb-3 last:border-0 last:pb-0 sm:flex-row sm:items-center sm:gap-3"
+                        >
+                          <span className="min-w-0 flex-1 text-sm leading-snug">
+                            {spec?.label ?? item.productSpecId}
+                            {item.isGift && (
+                              <Badge variant="wine" className="ml-1 text-[10px] px-1 py-0">
+                                赠品
+                              </Badge>
+                            )}
+                            <span className="block text-xs text-muted mt-0.5 sm:inline sm:mt-0 sm:ml-1">
+                              可核销 {item.quantity}
+                              {spec ? getUnitForItem(item.productSpecId) : ""}
                             </span>
-                            <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
-                              <span className="text-xs text-muted whitespace-nowrap">数量</span>
-                              <QtyInput
-                                min={0}
-                                max={item.quantity}
-                                className="input-compact"
-                                value={createReconcileQty[item.productSpecId] ?? 0}
-                                onChange={(n) => updateCreateReconcileQty(item.productSpecId, n)}
-                              />
-                              <span className="text-xs text-muted">
-                                {spec ? getUnitForItem(item.productSpecId) : ""}
-                              </span>
-                            </div>
+                          </span>
+                          <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+                            <span className="text-xs text-muted whitespace-nowrap">数量</span>
+                            <QtyInput
+                              min={0}
+                              max={item.quantity}
+                              className="input-compact"
+                              value={createReconcileQty[idx] ?? 0}
+                              onChange={(n) => updateCreateReconcileQty(idx, n)}
+                            />
+                            <span className="text-xs text-muted">
+                              {spec ? getUnitForItem(item.productSpecId) : ""}
+                            </span>
                           </div>
-                        );
-                      })}
+                        </div>
+                      );
+                    })}
                     {createForm.items.every((i) => !i.productSpecId) && (
                       <p className="text-sm text-muted">请先选择订单产品</p>
                     )}
@@ -1555,6 +1582,19 @@ export function OrdersPage({ user }: { user: SessionUser }) {
               </div>
             )}
             {error && <p className="text-sm text-red-700">{error}</p>}
+            <div className="pt-2 border-t border-border">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => shareOrder(selected)}
+              >
+                <Share2 className="h-3.5 w-3.5 mr-1" />
+                分享给客户
+              </Button>
+              <p className="text-xs text-muted mt-1">
+                分享页不含成本、毛利；客户手机号脱敏显示
+              </p>
+            </div>
           </div>
         )}
         <ModalFooter>
@@ -1584,6 +1624,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                   value={paymentForm.paymentStatus}
                   onChange={(e) => {
                     const status = e.target.value as "UNPAID" | "PARTIAL" | "PAID";
+                    const productsDone = allProductsFullyReconciled(paymentOrder.creditLines);
                     setPaymentForm({
                       ...paymentForm,
                       paymentStatus: status,
@@ -1592,11 +1633,13 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                           ? paymentOrder.totalAmount
                           : status === "UNPAID"
                             ? 0
-                            : calcReconcilePaidAmount(
-                                paymentOrder.items,
-                                paymentOrder.paidAmount,
-                                reconcileQty
-                              ),
+                            : productsDone
+                              ? paymentOrder.paidAmount
+                              : calcReconcilePaidAmount(
+                                  paymentOrder.items,
+                                  paymentOrder.paidAmount,
+                                  reconcileQty
+                                ),
                     });
                   }}
                 >
@@ -1641,7 +1684,8 @@ export function OrdersPage({ user }: { user: SessionUser }) {
               )}
             </div>
             {paymentNeedsReconcile(paymentOrder, paymentForm.paymentStatus) &&
-              paymentForm.paymentStatus !== "UNPAID" && (
+              paymentForm.paymentStatus !== "UNPAID" &&
+              !allProductsFullyReconciled(paymentOrder.creditLines) && (
                 <div>
                   <Label>核销产品数量 *</Label>
                   <p className="text-xs text-muted mb-2">
@@ -1690,8 +1734,15 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                   </div>
                 </div>
               )}
+            {allProductsFullyReconciled(paymentOrder.creditLines) &&
+              paymentForm.paymentStatus !== "UNPAID" && (
+                <p className="text-xs text-muted bg-paper border border-border rounded-sm p-3">
+                  产品已全部核销，可直接设置收款金额（含运费及其它费用），无需再填核销数量。
+                </p>
+              )}
             {paymentForm.paymentStatus === "PAID" &&
-              !paymentNeedsReconcile(paymentOrder, "PAID") && (
+              !paymentNeedsReconcile(paymentOrder, "PAID") &&
+              !allProductsFullyReconciled(paymentOrder.creditLines) && (
                 <p className="text-xs text-muted bg-paper border border-border rounded-sm p-3">
                   一次性全额收款，无需填写核销产品数量。
                 </p>
