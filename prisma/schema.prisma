@@ -75,6 +75,11 @@ enum OrderVoucherCategory {
   OTHER
 }
 
+enum DeviceKind {
+  MOBILE
+  DESKTOP
+}
+
 model User {
   id        String   @id @default(cuid())
   username  String   @unique
@@ -85,8 +90,21 @@ model User {
   updatedAt DateTime @updatedAt
 
   customers     Customer[]
-  salesOrders   Order[] @relation("SalesOrders")
-  handledOrders Order[] @relation("HandledOrders")
+  salesOrders   Order[]       @relation("SalesOrders")
+  handledOrders Order[]       @relation("HandledOrders")
+  sessions      UserSession[]
+}
+
+model UserSession {
+  id         String     @id @default(cuid())
+  userId     String
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceKind DeviceKind
+  expiresAt  DateTime
+  createdAt  DateTime   @default(now())
+
+  @@unique([userId, deviceKind])
+  @@index([userId])
 }
 
 model ChannelType {
