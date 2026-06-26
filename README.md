@@ -1,20 +1,26 @@
-# 毛府酒庄订单与CRM管理后台
+# 毛府酒庄订单与 CRM 管理后台（Docker 版）
 
-支持销售、职能、管理员三角色的 B 端订单与 CRM 管理系统。
+基于 [maofu-crm-main](../maofu-crm-main) 模板创建，面向 **Docker / Docker Compose** 服务器部署。
 
 ## 技术栈
 
 - Next.js 16 + TypeScript + Tailwind CSS
 - Prisma 7 + SQLite
 - JWT 会话认证 + 角色权限控制
+- Docker 多阶段构建 + 数据卷持久化
 
-## 快速开始（本地开发）
+## 服务器代码目录
+
+```
+/data/service/maofu/maofu_crm/maofu_crm_main
+```
+
+## 本地开发
 
 > Node.js 要求 **20.19+** 或 **22.x**
 
 ```bash
-git clone https://github.com/ranmannic/maofu-crm.git
-cd maofu-crm
+cd maofu_crm_main
 npm install
 cp .env.example .env
 npx prisma db push
@@ -22,45 +28,59 @@ npm run db:seed
 npm run dev
 ```
 
-访问 http://localhost:3000
+访问 http://localhost:3001
 
-## 生产部署
+## Docker 部署（推荐）
 
-详见 **[docs/DEPLOY.md](./docs/DEPLOY.md)**（阿里云 Linux 完整部署、更新流程、数据备份与迁移指南）。
+完整说明见 **[docs/DOCKER.md](./docs/DOCKER.md)**。
+
+```bash
+cd /data/service/maofu/maofu_crm/maofu_crm_main
+cp .env.example .env
+docker compose up -d --build
+```
 
 ## 演示账号（密码均为 `123456`）
 
 | 角色 | 用户名 | 权限 |
 |------|--------|------|
-| 管理员 | admin | 全功能：渠道/产品/账号/客户转移与恢复/毛利分析 |
-| 销售 | sales01, sales02 | 客户管理、下单、业绩同比曲线 |
-| 职能 | ops01 | 订单收款、发货、运单、账期核销 |
+| 管理员 | admin | 全功能 |
+| 销售 | sales01, sales02 | 客户、下单、业绩、跟进 |
+| 职能 | ops01 | 收款、发货、账期、职能工作台 |
 
-## 主要功能
+## 主要功能（v0.9.0）
 
-- **两级渠道管理**：团购/批发/直销/分销/特渠 + 12 类二级渠道
-- **客户管理**：软删除/恢复、转移销售、手机号脱敏；删除客户不影响历史订单
-- **订单管理**：产品金额 + 运费 + 其它费用；部分付款；软删除/恢复；修改审计
-- **账期核销**：部分付款或未付款已发货订单自动纳入；按客户管理库存；付款核销与坏账处理；未核销数量统一折算为瓶数
-- **权限隔离**：非管理员不可见成本、毛利、毛利率；销售可查看账期页但不可编辑
-- **数据概览**：业绩按收款/核销时间统计；订单数/业绩/退款/已收款业绩均可点击查看明细
-- **退款管理**：职能/管理员可设置退款；退款业绩不计入收款业绩
-- **水墨中国风 UI**：宣纸底色、墨色文字、朱砂点缀；左侧菜单固定、右侧内容滚动
-- **移动端适配**：手机端抽屉导航、订单卡片列表、筛选/统计紧凑布局；弹窗底部抽屉样式
+- **两级渠道管理**、**客户管理**（360 视图）、**客户跟进**
+- **订单管理**（赠品行、凭证、分享链接、Excel 导出）
+- **产品档案**（图片、参数、规格、分享页）
+- **职能工作台**、**账期核销**（复核流程）
+- **数据概览**、**退款管理**、**权限隔离**
+- **移动端适配**、水墨中国风 UI
+
+## 数据持久化
+
+业务数据保存在宿主机目录 **`/data/service/maofu/maofu_crm/maofu_crm_data`**（可在 `.env` 中通过 `DATA_DIR` 修改）：
+
+| 数据 | 宿主机路径 | 容器内路径 |
+|------|------------|------------|
+| SQLite 数据库 | `maofu_crm_data/db/prod.db` | `/data/prod.db` |
+| 上传文件（凭证/产品图） | `maofu_crm_data/uploads/` | `/app/data/uploads/` |
+
+从旧 Docker 命名卷迁移见 `scripts/migrate-docker-volumes-to-host.sh`；日常备份见 `scripts/backup-data.sh`。
+
+## 环境变量（.env）
+
+```env
+APP_PORT=3001
+JWT_SECRET=...
+COOKIE_SECURE=false   # HTTP 访问；HTTPS 后改 true
+AUTO_SEED=false
+```
 
 ## 常用命令
 
 | 命令 | 说明 |
 |------|------|
-| `npm run dev` | 本地开发 |
-| `npm run build` | 生产构建 |
-| `npm run start` | 生产启动 |
-| `npm run db:migrate` | 开发环境生成 migration |
-| `npm run db:deploy` | 生产环境执行 migration |
-| `npm run db:seed` | 初始化演示数据（**仅空库/开发**） |
-| `npm run db:sync-performance` | 回填历史业绩记录（升级后推荐） |
-| `npm run db:clear-orders` | 清空全部订单，保留客户/账号/产品/渠道 |
-
-## 仓库
-
-https://github.com/ranmannic/maofu-crm
+| `docker compose build && docker compose up -d` | 构建并启动 |
+| `npm run db:sync-performance` | 回填业绩 |
+| `npm run db:sync-customer-status` | 回填客户状态 |

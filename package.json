@@ -1,11 +1,11 @@
 {
-  "name": "maofu-crm",
+  "name": "maofu_crm_main",
   "version": "0.9.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 3001",
     "build": "prisma generate && next build",
-    "start": "next start",
+    "start": "next start -p 3001",
     "lint": "eslint",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",

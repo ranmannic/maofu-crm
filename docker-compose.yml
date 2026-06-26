@@ -3,42 +3,28 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: maofu-crm
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+    image: maofu_crm_main:latest
+    container_name: maofu_crm_main
     restart: unless-stopped
-    env_file:
-      - .env
+    ports:
+      - "${APP_PORT:-3001}:3001"
     environment:
       DATABASE_URL: file:/data/prod.db
+      JWT_SECRET: ${JWT_SECRET:?请在 .env 中设置 JWT_SECRET}
+      AUTO_SEED: ${AUTO_SEED:-false}
+      INIT_DB: ${INIT_DB:-false}
+      RUN_SYNC: ${RUN_SYNC:-false}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
       NODE_ENV: production
-      HOSTNAME: 0.0.0.0
-      PORT: 3000
-    ports:
-      - "${APP_PORT:-3000}:3000"
+      PORT: 3001
     volumes:
-      - maofu-data:/data
-      - maofu-uploads:/app/data/uploads
+      - ${DATA_DIR:-/data/service/maofu/maofu_crm/maofu_crm_data}/db:/data
+      - ${DATA_DIR:-/data/service/maofu/maofu_crm/maofu_crm_data}/uploads:/app/data/uploads
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
-
-  nginx:
-    profiles: ["nginx"]
-    image: nginx:1.27-alpine
-    container_name: maofu-crm-nginx
-    restart: unless-stopped
-    ports:
-      - "${NGINX_HTTP_PORT:-80}:80"
-    volumes:
-      - ./deploy/nginx-docker.conf:/etc/nginx/conf.d/default.conf:ro
-    depends_on:
-      app:
-        condition: service_healthy
-
-volumes:
-  maofu-data:
-    name: maofu-crm-data
-  maofu-uploads:
-    name: maofu-crm-uploads

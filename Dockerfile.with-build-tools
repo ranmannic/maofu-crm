@@ -1,17 +1,12 @@
 # syntax=docker/dockerfile:1
-
-# 阿里云构建：
-#   export DOCKER_BUILDKIT=1
-#   docker compose build        # 日常更新（利用缓存，较快）
-#   docker compose build --no-cache   # 完整重建（较慢）
+# 备用：better-sqlite3 预编译包下载失败时，从源码编译
+#   docker build -f Dockerfile.with-build-tools -t maofu_crm_main:latest .
 
 ARG NPM_REGISTRY=https://registry.npmmirror.com
 
 FROM node:22-bookworm-slim AS base
 ARG NPM_REGISTRY
 ENV NPM_CONFIG_REGISTRY=${NPM_REGISTRY}
-ENV npm_config_fetch_timeout=300000
-ENV npm_config_fetch_retries=5
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
@@ -22,7 +17,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 COPY deploy/debian.aliyun.sources /etc/apt/sources.list.d/debian.sources
 COPY deploy/apt.conf /etc/apt/apt.conf.d/99timeout
 
-# 含编译工具：预编译包下载超时时可本地编译 better-sqlite3
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     rm -rf /var/lib/apt/lists/* \
@@ -30,7 +24,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && apt-get install -y --no-install-recommends \
       openssl \
       libsqlite3-0 \
-      libsqlite3-dev \
       python3 \
       make \
       g++ \
@@ -41,7 +34,7 @@ WORKDIR /app
 COPY package.json package-lock.json .npmrc ./
 RUN --mount=type=cache,target=/root/.npm \
     npm ci --ignore-scripts \
-    && (npm rebuild better-sqlite3 || npm rebuild better-sqlite3 --build-from-source) \
+    && npm rebuild better-sqlite3 --build-from-source \
     && node -e "require('better-sqlite3')(':memory:'); console.log('[deps] better-sqlite3 ok')"
 
 FROM base AS builder
@@ -56,7 +49,7 @@ COPY next.config.ts tsconfig.json postcss.config.mjs eslint.config.mjs ./
 ENV DATABASE_URL="file:./build.db"
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN --mount=type=cache,target=/app/.next/cache \
-    (npm rebuild better-sqlite3 || npm rebuild better-sqlite3 --build-from-source) \
+    npm rebuild better-sqlite3 --build-from-source \
     && npm run build \
   && rm -f build.db build.db-journal
 
@@ -65,9 +58,7 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3001
 ENV HOSTNAME=0.0.0.0
-
 RUN mkdir -p /data /app/data/uploads
-
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
@@ -78,7 +69,6 @@ COPY --from=builder /app/src/generated ./src/generated
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
     && node -e "require('better-sqlite3')(':memory:'); console.log('[runner] better-sqlite3 ok')"
-
 EXPOSE 3001
 VOLUME ["/data"]
 ENTRYPOINT ["docker-entrypoint.sh"]

@@ -1,27 +1,18 @@
-# Dependencies
 node_modules
 .next
-out
-
-# Git & IDE
 .git
 .gitignore
-.cursor
-.vscode
-
-# Env & local db (init.db is included explicitly in Dockerfile)
+*.db
+*.db-journal
 .env
 .env.*
 !.env.example
-!.env.docker.example
-dev.db
-*.db-journal
-
-# Dev runtime
-.node
-
-# Docs & misc
-*.md
-!docs/DEPLOY.md
-coverage
+!.npmrc
+npm-debug.log*
 .DS_Store
+coverage
+.vercel
+README.md
+docs/DEPLOY.md
+deploy/ecosystem.config.cjs
+deploy/nginx-maofu-crm.conf.example
