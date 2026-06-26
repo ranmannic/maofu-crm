@@ -1,0 +1,9 @@
+Types: deb
+URIs: http://mirrors.aliyun.com/debian
+Suites: bookworm bookworm-updates bookworm-backports
+Components: main contrib non-free non-free-firmware
+
+Types: deb
+URIs: http://mirrors.aliyun.com/debian-security
+Suites: bookworm-security
+Components: main contrib non-free non-free-firmware
