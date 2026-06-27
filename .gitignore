@@ -35,6 +35,9 @@ yarn-error.log*
 .env.local
 .env.*.local
 !.env.example
+.env.*.backup
+.env.pull-aside
+*.backup
 
 # database
 *.db

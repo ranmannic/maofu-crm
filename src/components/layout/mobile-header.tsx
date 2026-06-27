@@ -4,8 +4,10 @@ import { Menu } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { getNavTitle } from "@/components/layout/nav-items";
 import { useSidebar } from "@/components/layout/sidebar-context";
+import { EditionBadge, EditionSwitcher } from "@/components/edition/edition-switcher";
+import type { SessionUser } from "@/lib/auth-types";
 
-export function MobileHeader() {
+export function MobileHeader({ user }: { user: SessionUser }) {
   const pathname = usePathname();
   const { setOpen } = useSidebar();
   const title = getNavTitle(pathname);
@@ -20,7 +22,11 @@ export function MobileHeader() {
       >
         <Menu className="h-5 w-5" />
       </button>
-      <h1 className="font-serif text-base font-semibold truncate">{title}</h1>
+      <h1 className="font-serif text-base font-semibold truncate flex-1">{title}</h1>
+      <div className="flex items-center gap-2 shrink-0">
+        <EditionBadge />
+        {user.role === "ADMIN" && <EditionSwitcher user={user} />}
+      </div>
     </header>
   );
 }

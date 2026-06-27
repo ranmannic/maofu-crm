@@ -12,14 +12,15 @@ export function calcReconcilePaidAmount(
 }
 
 export function calcCreateReconcilePaidAmount(
-  items: { productSpecId: string; isGift?: boolean }[],
+  items: { productSpecId: string; isGift?: boolean; unitPrice?: number }[],
   specPrices: Map<string, number>,
   qtyMap: Record<number, number>
 ) {
   const sessionAmount = items.reduce((sum, item, idx) => {
     const qty = qtyMap[idx] ?? 0;
     if (qty <= 0 || item.isGift) return sum;
-    return sum + (specPrices.get(item.productSpecId) ?? 0) * qty;
+    const price = item.unitPrice ?? specPrices.get(item.productSpecId) ?? 0;
+    return sum + price * qty;
   }, 0);
   return Math.round(sessionAmount * 100) / 100;
 }

@@ -360,6 +360,7 @@ curl -I http://127.0.0.1:3000/login
 - [ ] v0.6+ 升级：收货地址、凭证、生日等新表已 migrate
 - [ ] v0.8+ 升级：确认 `maofu-uploads` 卷已挂载并备份
 - [ ] v0.9+ 升级：核销审核（`ReconciliationReviewStatus`）、现场铺货发货方式；职能可管理产品、导出订单 Excel
+- [ ] v1.0+ 升级：双版本/库存/客户政策/月度固定成本三个迁移已 `migrate deploy`（见 7.3.2）；新字段默认值正常，无需回填
 - [ ] 抽查：订单导出、账期核销待审核、职能工作台「核销待审核」提醒
 - [ ] 上线后登录页无默认密码提示；确认已修改全部账号密码
 
@@ -410,8 +411,27 @@ curl -I http://127.0.0.1:3000/login
 | v0.7+ | 全站移动端适配（抽屉导航、订单卡片、紧凑筛选/统计） | 无 schema 变更，拉代码重建镜像即可 |
 | v0.8+ | 职能工作台、产品相册/零售价/分享、客户 360、订单分享；uploads 卷 | 通常仅需 migrate；**务必挂载并备份 uploads 卷** |
 | v0.9+ | 销售核销需审核、现场铺货、订单 Excel 导出、职能产品管理、管理员改客户手机号等 | 通常仅需 migrate（`20260623140000_reconciliation_review_on_site_stocking` 等） |
+| v1.0+ | **普通版/高级版双版本**、高级版库存管理、客户政策（拿货价/备注）、首页自定义日期与盈利分析（月度固定成本）、分享改为复制链接/微信分享 | **仅需 migrate**（见下方 7.3.2）；新字段均有默认值，无需手动回填 |
 
-详细字段说明见历史版本记录；当前仓库含 v0.8.0 基线及后续功能迭代。
+详细字段说明见历史版本记录；当前仓库含 v0.8.0 基线及后续功能迭代（含 v1.0 双版本）。
+
+### 7.3.2 v1.0 数据结构变更与老数据兼容（重要）
+
+本次升级**全部为增量变更，对已有生产数据安全**，由 entrypoint 的 `prisma migrate deploy` 自动按序执行，无需手动改库或回填：
+
+| 迁移目录 | 变更内容 | 老数据初始化方式 |
+|----------|----------|------------------|
+| `20260626210000_premium_edition_inventory` | 新建 `AppSetting` 表（版本/试用状态）并写入 `global` 行；`ProductSpec` 新增 `stockQty` | 新表自动插入 `('global','STANDARD')`；`stockQty` 对已有规格 **DEFAULT 0** |
+| `20260627041217_add_customer_price_policy_note` | 新建 `CustomerPricePolicyNote` 表（客户政策备注） | 全新表，按需写入；老客户无记录时前端展示「暂无」 |
+| `20260627043839_add_monthly_fixed_cost` | `AppSetting` 增加 `monthlyFixedCost` | 表重定义经 `INSERT...SELECT` **保留原有版本/试用字段**；新列对已有行 **DEFAULT 0** |
+
+> ✅ **数据安全要点**：
+> - 三个迁移均为「新建表 / 加默认值列 / 表重定义保留旧数据」，不删除业务数据；
+> - `add_monthly_fixed_cost` 虽为 SQLite 表重定义（drop+create），但通过 `INSERT INTO new_AppSetting ... SELECT ... FROM AppSetting` 完整保留试用/订阅状态；
+> - 升级**无需** `RUN_SYNC`、无需 `sync-performance` / `sync-customer-status`（除非首页业绩历史数据为 0）；
+> - 升级前仍**必须**按 [6.0 节](#60-生产更新安全流程推荐按顺序执行) 备份 `prod.db` 与 uploads 卷。
+
+升级后抽查：高级版切换、库存管理（`/inventory`）、客户 360 客户政策、首页「订单毛利」毛利率与「点击盈利分析」、订单/产品「分享」弹窗复制链接。
 
 ### 7.3.1 功能与路由说明（v0.8+ / v0.9+）
 

@@ -8,6 +8,7 @@ import { Modal, ModalFooter } from "@/components/ui/modal";
 import { Input, Label, Textarea, Select, QtyInput } from "@/components/ui/input";
 import { formatCurrency } from "@/lib/utils";
 import { SPEC_UNIT_LABELS, SPEC_UNIT_OPTIONS } from "@/lib/constants";
+import { useShareLink } from "@/hooks/use-share-link";
 import type { SpecUnit } from "@/generated/prisma/client";
 
 interface ProductImage {
@@ -59,6 +60,7 @@ const emptyRetail = {
 };
 
 export default function ProductsPage() {
+  const { shareProduct, shareModal } = useShareLink();
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [productModal, setProductModal] = useState(false);
@@ -280,18 +282,6 @@ export default function ProductsPage() {
     await load();
   }
 
-  async function shareProduct(id: string) {
-    const res = await fetch(`/api/products/${id}/share`, { method: "POST" });
-    const data = await res.json();
-    if (!res.ok) {
-      alert(data.error || "失败");
-      return;
-    }
-    const url = data.shareUrl || `${window.location.origin}/share/product/${data.shareToken}`;
-    await navigator.clipboard.writeText(url);
-    alert("客户分享链接已复制");
-  }
-
   async function deleteProduct(id: string) {
     if (!confirm("确定删除此产品？")) return;
     await fetch(`/api/products/${id}`, { method: "DELETE" });
@@ -364,7 +354,7 @@ export default function ProductsPage() {
                           <Pencil className="h-3.5 w-3.5 mr-1" />
                           编辑
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => shareProduct(p.id)}>
+                        <Button variant="ghost" size="sm" onClick={() => shareProduct(p.id, p.name)}>
                           <Share2 className="h-3.5 w-3.5" />
                         </Button>
                         <Button variant="ghost" size="sm" onClick={() => deleteProduct(p.id)}>
@@ -679,6 +669,7 @@ export default function ProductsPage() {
           <Button onClick={saveSpec} disabled={saving}>{saving ? "保存中..." : "保存"}</Button>
         </ModalFooter>
       </Modal>
+      {shareModal}
     </div>
   );
 }

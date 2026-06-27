@@ -80,6 +80,22 @@ enum DeviceKind {
   DESKTOP
 }
 
+enum AppEdition {
+  STANDARD
+  PREMIUM
+}
+
+model AppSetting {
+  id                    String     @id @default("global")
+  edition               AppEdition @default(STANDARD)
+  premiumTrialStartedAt DateTime?
+  premiumTrialEndsAt    DateTime?
+  premiumSubscribedAt   DateTime?
+  monthlyFixedCost      Float      @default(0)
+  updatedAt             DateTime   @updatedAt
+  updatedById           String?
+}
+
 model User {
   id        String   @id @default(cuid())
   username  String   @unique
@@ -142,6 +158,20 @@ model Customer {
   creditInventories CustomerInventory[]
   followUpRecords   CustomerFollowUpRecord[]
   shippingAddresses CustomerShippingAddress[]
+  pricePolicyNotes  CustomerPricePolicyNote[]
+}
+
+model CustomerPricePolicyNote {
+  id            String   @id @default(cuid())
+  customerId    String
+  customer      Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  productSpecId String
+  note          String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([customerId, productSpecId])
+  @@index([customerId])
 }
 
 model CustomerShippingAddress {
@@ -221,6 +251,7 @@ model ProductSpec {
   wholesaleFloorPrice Float?
   description       String?
   thumbnailKey      String?
+  stockQty          Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

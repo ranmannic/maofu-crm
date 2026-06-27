@@ -340,20 +340,22 @@ export function CustomerShippingAddressModal({
             )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
+              <div className="sm:col-span-1">
                 <Label>收货人姓名 *</Label>
                 <Input
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
                 />
               </div>
-              <div>
+              <div className="sm:col-span-1">
                 <Label>联系电话 *</Label>
                 <Input
                   value={form.phone}
                   onChange={(e) => setForm({ ...form, phone: e.target.value })}
                 />
               </div>
+            </div>
+            <div className="grid grid-cols-3 gap-2 sm:gap-3">
               <div>
                 <Label>省</Label>
                 <Input
@@ -375,22 +377,22 @@ export function CustomerShippingAddressModal({
                   onChange={(e) => setForm({ ...form, county: e.target.value })}
                 />
               </div>
-              <div className="col-span-2">
-                <Label>详细地址 *</Label>
-                <Input
-                  value={form.address}
-                  onChange={(e) => setForm({ ...form, address: e.target.value })}
-                />
-              </div>
-              <label className="col-span-2 flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={form.isDefault}
-                  onChange={(e) => setForm({ ...form, isDefault: e.target.checked })}
-                />
-                设为默认地址
-              </label>
             </div>
+            <div>
+              <Label>详细地址 *</Label>
+              <Input
+                value={form.address}
+                onChange={(e) => setForm({ ...form, address: e.target.value })}
+              />
+            </div>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={form.isDefault}
+                onChange={(e) => setForm({ ...form, isDefault: e.target.checked })}
+              />
+              设为默认地址
+            </label>
 
             <div className="flex gap-2">
               <Button onClick={handleSave} disabled={saving}>

@@ -28,6 +28,7 @@ const orderItemSchema = z.object({
   productSpecId: z.string(),
   quantity: z.number().int().min(1),
   isGift: z.boolean().optional(),
+  unitPrice: z.number().min(0).optional(),
 });
 
 const deliverySchema = z.object({
@@ -135,7 +136,7 @@ export async function POST(request: NextRequest) {
         specName: spec.name,
         unitType: spec.unitType,
         quantity: item.quantity,
-        unitPrice: isGift ? 0 : spec.price,
+        unitPrice: isGift ? 0 : (item.unitPrice ?? spec.price),
         unitCost: spec.cost,
         isGift,
       };

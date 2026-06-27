@@ -4,11 +4,14 @@ import { useEffect, useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Select } from "@/components/ui/input";
+import { Select, Input } from "@/components/ui/input";
 import { Modal, ModalFooter } from "@/components/ui/modal";
 import { YoYCurveChart } from "@/components/dashboard/yoy-chart";
 import { ChannelPieChart } from "@/components/dashboard/channel-pie-chart";
 import { CategoryPerformanceSection } from "@/components/dashboard/category-performance-section";
+import { ProfitAnalysisModal } from "@/components/dashboard/profit-analysis-modal";
+import { EditionSwitcher } from "@/components/edition/edition-switcher";
+import { useEdition } from "@/components/edition/edition-provider";
 import { ADMIN_DASHBOARD_DATA_VISIBLE_KEY } from "@/lib/constants";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import type { SessionUser } from "@/lib/auth-types";
@@ -55,6 +58,7 @@ interface StatsData {
     shippedCount: number;
     unshippedCount: number;
     totalProfit?: number;
+    grossProfitMargin?: number | null;
   };
   refundStats: {
     totalAmount: number;
@@ -98,18 +102,30 @@ interface StatsData {
     churnCustomers: { month: string; currentYear: number; lastYear: number }[];
   };
   salesUsers?: { id: string; name: string }[];
+  fixedCostStats?: {
+    monthlyFixedCost: number;
+    proratedFixedCost: number;
+    netProfitAfterFixedCost: number;
+    coversFixedCost: boolean;
+    periodLabel: string;
+  };
 }
 
 export function DashboardPage({ user }: { user: SessionUser }) {
   const isAdmin = user.role === "ADMIN";
+  const { isPremiumActive } = useEdition();
   const [period, setPeriod] = useState("month");
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd] = useState("");
   const [salesId, setSalesId] = useState("");
   const [stats, setStats] = useState<StatsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
   const [detailModal, setDetailModal] = useState<
     null | "orders" | "performance-total" | "performance-paid" | "performance-unpaid" | "refund"
   >(null);
+  const [profitAnalysisOpen, setProfitAnalysisOpen] = useState(false);
   const [dataVisible, setDataVisible] = useState(() => {
     if (typeof window === "undefined") return true;
     if (!isAdmin) return true;
@@ -126,10 +142,16 @@ export function DashboardPage({ user }: { user: SessionUser }) {
   }
 
   useEffect(() => {
+    if (period === "custom" && (!customStart || !customEnd)) return;
+
     async function load() {
       setLoading(true);
       setLoadError("");
       const params = new URLSearchParams({ period });
+      if (period === "custom") {
+        params.set("start", customStart);
+        params.set("end", customEnd);
+      }
       if (salesId) params.set("salesId", salesId);
       try {
         const res = await fetch(`/api/stats?${params}`);
@@ -147,7 +169,19 @@ export function DashboardPage({ user }: { user: SessionUser }) {
       setLoading(false);
     }
     load();
-  }, [period, salesId]);
+  }, [period, customStart, customEnd, salesId, reloadKey]);
+
+  function handlePeriodChange(next: string) {
+    setPeriod(next);
+    if (next === "custom" && !customStart && !customEnd) {
+      const now = new Date();
+      const start = new Date(now.getFullYear(), now.getMonth(), 1);
+      const fmt = (d: Date) =>
+        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      setCustomStart(fmt(start));
+      setCustomEnd(fmt(now));
+    }
+  }
 
   const hidden = isAdmin && !dataVisible;
 
@@ -181,6 +215,9 @@ export function DashboardPage({ user }: { user: SessionUser }) {
           </p>
         </div>
         <div className="page-header-actions">
+          {isAdmin && (
+            <EditionSwitcher user={user} className="hidden lg:inline-flex" />
+          )}
           {isAdmin && (
             <Button
               variant="secondary"
@@ -217,13 +254,33 @@ export function DashboardPage({ user }: { user: SessionUser }) {
           )}
           <Select
             value={period}
-            onChange={(e) => setPeriod(e.target.value)}
+            onChange={(e) => handlePeriodChange(e.target.value)}
             className="w-28"
           >
             {isAdmin && <option value="day">今日</option>}
             <option value="month">本月</option>
             {isAdmin && <option value="year">本年</option>}
+            {isAdmin && isPremiumActive && (
+              <option value="custom">自定义</option>
+            )}
           </Select>
+          {isAdmin && isPremiumActive && period === "custom" && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                type="date"
+                value={customStart}
+                onChange={(e) => setCustomStart(e.target.value)}
+                className="w-36"
+              />
+              <span className="text-sm text-muted">至</span>
+              <Input
+                type="date"
+                value={customEnd}
+                onChange={(e) => setCustomEnd(e.target.value)}
+                className="w-36"
+              />
+            </div>
+          )}
         </div>
       </div>
 
@@ -282,15 +339,47 @@ export function DashboardPage({ user }: { user: SessionUser }) {
             {isAdmin && stats.orderStats.totalProfit !== undefined && (
               <StatCard
                 title="订单毛利"
+                titleSuffix={
+                  !hidden && stats.orderStats.grossProfitMargin != null
+                    ? `毛利率 ${stats.orderStats.grossProfitMargin.toFixed(1)}%`
+                    : undefined
+                }
                 value={
                   hidden
                     ? "****"
                     : formatCurrency(stats.orderStats.totalProfit)
                 }
+                subtitle={
+                  isPremiumActive && stats.fixedCostStats && !hidden
+                    ? "点击盈利分析"
+                    : undefined
+                }
                 highlight
+                clickable={
+                  !hidden && isPremiumActive && !!stats.fixedCostStats
+                }
+                onClick={
+                  !hidden && isPremiumActive && stats.fixedCostStats
+                    ? () => setProfitAnalysisOpen(true)
+                    : undefined
+                }
               />
             )}
           </div>
+
+          {isAdmin &&
+            isPremiumActive &&
+            stats.fixedCostStats &&
+            stats.orderStats.totalProfit !== undefined && (
+              <ProfitAnalysisModal
+                open={profitAnalysisOpen}
+                onClose={() => setProfitAnalysisOpen(false)}
+                stats={stats.fixedCostStats}
+                grossProfit={stats.orderStats.totalProfit}
+                grossProfitMargin={stats.orderStats.grossProfitMargin ?? null}
+                onUpdated={() => setReloadKey((k) => k + 1)}
+              />
+            )}
 
           <div
             className={
@@ -641,6 +730,7 @@ function PerformanceEventTable({
 
 function StatCard({
   title,
+  titleSuffix,
   value,
   highlight,
   subtitle,
@@ -648,6 +738,7 @@ function StatCard({
   clickable,
 }: {
   title: string;
+  titleSuffix?: string;
   value: string;
   highlight?: boolean;
   subtitle?: string;
@@ -670,7 +761,12 @@ function StatCard({
     >
       <Card className={clickable ? "hover:border-wine/40 transition-colors h-full" : undefined}>
         <CardContent className="pt-5">
-          <p className="text-sm text-muted font-serif">{title}</p>
+          <div className="flex items-baseline gap-2 flex-wrap">
+            <p className="text-sm text-muted font-serif">{title}</p>
+            {titleSuffix && (
+              <span className="text-xs text-muted">{titleSuffix}</span>
+            )}
+          </div>
           <p
             className={`text-2xl font-serif font-bold mt-1 ${highlight ? "text-wine" : ""}`}
           >

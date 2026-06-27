@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
-import { Plus, Eye, History, Search, Trash2, RotateCcw, Wallet, Truck, Paperclip, Share2, MessageSquare, Download } from "lucide-react";
+import { useEffect, useState, useCallback, useRef } from "react";
+import { useRouter } from "next/navigation";
+import { Plus, Eye, History, Search, Trash2, RotateCcw, Wallet, Truck, Paperclip, Share2, MessageSquare, Download, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -15,6 +16,7 @@ import { formatShippingAddress } from "@/lib/address-parse";
 import { calcReconcilePaidAmount, calcCreateReconcilePaidAmount, allProductsFullyReconciled } from "@/lib/reconcile-ui";
 import { validateNonGiftDuplicateItems } from "@/lib/order-items";
 import { OrderVouchersPanel } from "@/components/orders/order-vouchers-panel";
+import { useShareLink } from "@/hooks/use-share-link";
 import type { SessionUser } from "@/lib/auth-types";
 import type { SpecUnit } from "@/generated/prisma/client";
 
@@ -124,7 +126,21 @@ function getPaymentBadge(order: Order) {
   return { variant: "warning" as const, label: "未收" };
 }
 
-export function OrdersPage({ user }: { user: SessionUser }) {
+export function OrdersPage({
+  user,
+  variant = "default",
+  initialCustomerId,
+  returnTo,
+}: {
+  user: SessionUser;
+  variant?: "default" | "create";
+  initialCustomerId?: string;
+  returnTo?: string;
+}) {
+  const router = useRouter();
+  const { shareOrder, shareModal } = useShareLink();
+  const isCreateOnly = variant === "create";
+  const createInitialized = useRef(false);
   const canCreate = ["SALES", "ADMIN"].includes(user.role);
   const canDelete = ["SALES", "ADMIN"].includes(user.role);
   const canManageOps = ["OPERATIONS", "ADMIN"].includes(user.role);
@@ -186,9 +202,10 @@ export function OrdersPage({ user }: { user: SessionUser }) {
     amountAdjustReason: "",
     shippingMethod: "PICKUP" as "PICKUP" | "SELF_DELIVERY" | "EXPRESS" | "LOGISTICS" | "ON_SITE_STOCKING",
     shippingAddressId: "",
-    items: [{ productSpecId: "", quantity: 1, isGift: false }],
+    items: [{ productSpecId: "", quantity: 1, isGift: false, unitPrice: 0, priceFromLastPurchase: false }],
   });
   const [customerAddresses, setCustomerAddresses] = useState<CustomerShippingAddress[]>([]);
+  const [customerLastPrices, setCustomerLastPrices] = useState<Record<string, number>>({});
   const [productAmountPreview, setProductAmountPreview] = useState(0);
   const [calculatedPreview, setCalculatedPreview] = useState(0);
 
@@ -241,7 +258,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
     setLoading(false);
   }, [page, appliedFilters, appliedShowDeleted]);
 
-  useEffect(() => { loadOrders(); }, [loadOrders]);
+  useEffect(() => { if (!isCreateOnly) loadOrders(); }, [loadOrders, isCreateOnly]);
 
   function openNotesPreview(order: Order) {
     if (!order.notes?.trim()) return;
@@ -326,12 +343,36 @@ export function OrdersPage({ user }: { user: SessionUser }) {
   }
 
   function calcFromItems(items: typeof createForm.items) {
-    const specs = getAllSpecs();
     return items.reduce((sum, item) => {
       if (item.isGift) return sum;
-      const spec = specs.find((s) => s.id === item.productSpecId);
-      return sum + (spec ? spec.price * item.quantity : 0);
+      if (!item.productSpecId) return sum;
+      return sum + item.unitPrice * item.quantity;
     }, 0);
+  }
+
+  function resolveItemUnitPrice(
+    specId: string,
+    isGift: boolean,
+    lastPrices: Record<string, number>
+  ) {
+    if (isGift || !specId) {
+      return { unitPrice: 0, priceFromLastPurchase: false };
+    }
+    const spec = getAllSpecs().find((s) => s.id === specId);
+    if (!spec) return { unitPrice: 0, priceFromLastPurchase: false };
+    const last = lastPrices[specId];
+    if (last != null && last !== spec.price) {
+      return { unitPrice: last, priceFromLastPurchase: true };
+    }
+    return { unitPrice: spec.price, priceFromLastPurchase: false };
+  }
+
+  function buildCreateSpecPrices() {
+    const map = new Map(getAllSpecs().map((s) => [s.id, s.price]));
+    createForm.items.forEach((item) => {
+      if (item.productSpecId) map.set(item.productSpecId, item.unitPrice);
+    });
+    return map;
   }
 
   useEffect(() => {
@@ -345,6 +386,27 @@ export function OrdersPage({ user }: { user: SessionUser }) {
       }
     }
   }, [createForm.items, createForm.shippingFee, createForm.otherFee, products, createOpen]);
+
+  async function loadCustomerLastPrices(customerId: string) {
+    if (!customerId) {
+      setCustomerLastPrices({});
+      return;
+    }
+    const res = await fetch(`/api/customers/${customerId}/last-prices`);
+    const prices = res.ok ? ((await res.json()) as Record<string, number>) : {};
+    setCustomerLastPrices(prices);
+    setCreateForm((f) => ({
+      ...f,
+      items: f.items.map((item) => {
+        const resolved = resolveItemUnitPrice(
+          item.productSpecId,
+          item.isGift,
+          prices
+        );
+        return { ...item, ...resolved };
+      }),
+    }));
+  }
 
   async function loadCustomerAddresses(customerId: string) {
     if (!customerId) {
@@ -369,6 +431,9 @@ export function OrdersPage({ user }: { user: SessionUser }) {
   useEffect(() => {
     if (createOpen && createForm.customerId) {
       loadCustomerAddresses(createForm.customerId);
+      loadCustomerLastPrices(createForm.customerId);
+    } else if (createOpen) {
+      setCustomerLastPrices({});
     }
   }, [createOpen, createForm.customerId]);
 
@@ -386,6 +451,36 @@ export function OrdersPage({ user }: { user: SessionUser }) {
     if (uRes?.ok) setOpsUsers(await uRes.json());
   }
 
+  function openCreateWithCustomer(customerId: string) {
+    setCreateForm({
+      customerId,
+      handlerId: "",
+      notes: "",
+      shippingFee: 0,
+      otherFee: 0,
+      totalAmount: 0,
+      amountAdjustReason: "",
+      shippingMethod: "PICKUP",
+      shippingAddressId: "",
+      items: [
+        {
+          productSpecId: "",
+          quantity: 1,
+          isGift: false,
+          unitPrice: 0,
+          priceFromLastPurchase: false,
+        },
+      ],
+    });
+    setCustomerAddresses([]);
+    setCustomerLastPrices({});
+    setCreatePaymentForm({ paymentStatus: "UNPAID", paidAmount: 0, paidAt: "" });
+    setCreateReconcileQty({});
+    setError("");
+    loadCreateData();
+    setCreateOpen(true);
+  }
+
   function openCreate() {
     setCreateForm({
       customerId: "", handlerId: "", notes: "",
@@ -393,15 +488,23 @@ export function OrdersPage({ user }: { user: SessionUser }) {
       totalAmount: 0, amountAdjustReason: "",
       shippingMethod: "PICKUP",
       shippingAddressId: "",
-      items: [{ productSpecId: "", quantity: 1, isGift: false }],
+      items: [{ productSpecId: "", quantity: 1, isGift: false, unitPrice: 0, priceFromLastPurchase: false }],
     });
     setCustomerAddresses([]);
+    setCustomerLastPrices({});
     setCreatePaymentForm({ paymentStatus: "UNPAID", paidAmount: 0, paidAt: "" });
     setCreateReconcileQty({});
     setError("");
     loadCreateData();
     setCreateOpen(true);
   }
+
+  useEffect(() => {
+    if (isCreateOnly && initialCustomerId && !createInitialized.current) {
+      createInitialized.current = true;
+      openCreateWithCustomer(initialCustomerId);
+    }
+  }, [isCreateOnly, initialCustomerId]);
 
   async function openDetail(order: Order) {
     setError("");
@@ -479,9 +582,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
     const nextQty = { ...createReconcileQty, [itemIndex]: quantity };
     setCreateReconcileQty(nextQty);
     if (createPaymentForm.paymentStatus === "PARTIAL") {
-      const specPrices = new Map(
-        getAllSpecs().map((s) => [s.id, s.price])
-      );
+      const specPrices = buildCreateSpecPrices();
       setCreatePaymentForm((prev) => ({
         ...prev,
         paidAmount: calcCreateReconcilePaidAmount(
@@ -620,6 +721,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
         productSpecId: i.productSpecId,
         quantity: i.quantity,
         isGift: i.isGift,
+        unitPrice: i.isGift ? 0 : i.unitPrice,
       }));
 
     const duplicateError = validateNonGiftDuplicateItems(items);
@@ -678,6 +780,11 @@ export function OrdersPage({ user }: { user: SessionUser }) {
       return;
     }
     setCreateOpen(false);
+    if (isCreateOnly) {
+      router.push(returnTo || `/customers/${createForm.customerId}`);
+      setSaving(false);
+      return;
+    }
     await loadOrders();
     setSaving(false);
   }
@@ -753,26 +860,6 @@ export function OrdersPage({ user }: { user: SessionUser }) {
       return;
     }
     await loadOrders();
-  }
-
-  async function shareOrder(order: Order) {
-    try {
-      const res = await fetch(`/api/orders/${order.id}/share`, { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || "生成分享链接失败");
-        return;
-      }
-      const url = data.shareUrl || `${window.location.origin}/share/order/${data.shareToken}`;
-      if (navigator.share) {
-        await navigator.share({ title: `订单 ${order.orderNo}`, url });
-      } else {
-        await navigator.clipboard.writeText(url);
-        alert("分享链接已复制（不含成本与毛利，客户手机号已脱敏）");
-      }
-    } catch {
-      alert("分享失败");
-    }
   }
 
   const specs = getAllSpecs();
@@ -893,6 +980,22 @@ export function OrdersPage({ user }: { user: SessionUser }) {
 
   return (
     <div className="space-y-5">
+      {isCreateOnly ? (
+        <div className="flex items-center gap-3">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => router.push(returnTo || "/orders")}
+          >
+            <ArrowLeft className="h-4 w-4 mr-1" />
+            返回
+          </Button>
+          <div>
+            <h1 className="text-xl sm:text-2xl font-serif font-bold">新建订单</h1>
+            <p className="text-sm text-muted mt-0.5 font-serif">为客户创建新订单</p>
+          </div>
+        </div>
+      ) : (
       <div className="page-header">
         <div className="hidden lg:block">
           <h1 className="text-2xl font-serif font-bold">订单管理</h1>
@@ -919,7 +1022,9 @@ export function OrdersPage({ user }: { user: SessionUser }) {
           </div>
         )}
       </div>
+      )}
 
+      {!isCreateOnly && (
       <Card>
         <CardContent className="pt-5">
           <div className="filter-grid">
@@ -1157,12 +1262,35 @@ export function OrdersPage({ user }: { user: SessionUser }) {
           )}
         </CardContent>
       </Card>
+      )}
 
       {/* Create Modal */}
-      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="新建订单" className="sm:max-w-2xl">
+      <Modal
+        open={isCreateOnly ? true : createOpen}
+        onClose={() => {
+          if (isCreateOnly) {
+            router.push(returnTo || "/orders");
+            return;
+          }
+          setCreateOpen(false);
+        }}
+        title="新建订单"
+        className="sm:max-w-2xl"
+      >
         <div className="space-y-4">
           <div>
             <Label>客户 *</Label>
+            {isCreateOnly && createForm.customerId ? (
+              <Input
+                readOnly
+                className="bg-paper"
+                value={
+                  (Array.isArray(customers) ? customers : []).find(
+                    (c) => c.id === createForm.customerId
+                  )?.name || "加载中..."
+                }
+              />
+            ) : (
             <Select
               value={createForm.customerId}
               onChange={(e) =>
@@ -1178,6 +1306,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </Select>
+            )}
           </div>
           <div>
             <Label>发货方式 *</Label>
@@ -1243,45 +1372,89 @@ export function OrdersPage({ user }: { user: SessionUser }) {
           <div>
             <Label>订单产品 *</Label>
             {createForm.items.map((item, idx) => (
-              <div key={idx} className="flex gap-2 mt-2 items-center flex-wrap">
-                <Select
-                  value={item.productSpecId}
-                  onChange={(e) => {
-                    const items = [...createForm.items];
-                    items[idx].productSpecId = e.target.value;
-                    setCreateForm({ ...createForm, items });
-                  }}
-                  className="flex-1 min-w-[140px]"
-                >
-                  <option value="">选择规格</option>
-                  {specs.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-                </Select>
-                <QtyInput
-                  min={1}
-                  value={item.quantity}
-                  onChange={(n) => {
-                    const items = [...createForm.items];
-                    items[idx].quantity = n || 1;
-                    setCreateForm({ ...createForm, items });
-                  }}
-                  className="input-compact"
-                />
-                <span className="text-sm text-muted w-8">{getUnitForItem(item.productSpecId)}</span>
-                <label className="flex items-center gap-1 text-sm text-muted whitespace-nowrap">
-                  <input
-                    type="checkbox"
-                    checked={item.isGift}
+              <div key={idx} className="mt-2 space-y-2 border-b border-border/40 pb-3 last:border-0">
+                <div className="flex gap-2 items-center flex-wrap">
+                  <Select
+                    value={item.productSpecId}
                     onChange={(e) => {
+                      const specId = e.target.value;
                       const items = [...createForm.items];
-                      items[idx].isGift = e.target.checked;
+                      items[idx].productSpecId = specId;
+                      const resolved = resolveItemUnitPrice(
+                        specId,
+                        items[idx].isGift,
+                        customerLastPrices
+                      );
+                      items[idx].unitPrice = resolved.unitPrice;
+                      items[idx].priceFromLastPurchase = resolved.priceFromLastPurchase;
                       setCreateForm({ ...createForm, items });
                     }}
+                    className="flex-1 min-w-[140px]"
+                  >
+                    <option value="">选择规格</option>
+                    {specs.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+                  </Select>
+                  <QtyInput
+                    min={1}
+                    value={item.quantity}
+                    onChange={(n) => {
+                      const items = [...createForm.items];
+                      items[idx].quantity = n || 1;
+                      setCreateForm({ ...createForm, items });
+                    }}
+                    className="input-compact"
                   />
-                  赠品
-                </label>
+                  <span className="text-sm text-muted w-8">{getUnitForItem(item.productSpecId)}</span>
+                  <label className="flex items-center gap-1 text-sm text-muted whitespace-nowrap">
+                    <input
+                      type="checkbox"
+                      checked={item.isGift}
+                      onChange={(e) => {
+                        const items = [...createForm.items];
+                        items[idx].isGift = e.target.checked;
+                        const resolved = resolveItemUnitPrice(
+                          items[idx].productSpecId,
+                          items[idx].isGift,
+                          customerLastPrices
+                        );
+                        items[idx].unitPrice = resolved.unitPrice;
+                        items[idx].priceFromLastPurchase = resolved.priceFromLastPurchase;
+                        setCreateForm({ ...createForm, items });
+                      }}
+                    />
+                    赠品
+                  </label>
+                </div>
+                {item.productSpecId && !item.isGift && (
+                  <div className="max-w-[220px]">
+                    <Label className="text-xs text-muted">单价</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      step={0.01}
+                      value={item.unitPrice}
+                      onChange={(e) => {
+                        const price = parseFloat(e.target.value) || 0;
+                        const spec = specs.find((s) => s.id === item.productSpecId);
+                        const items = [...createForm.items];
+                        items[idx].unitPrice = price;
+                        items[idx].priceFromLastPurchase =
+                          spec != null &&
+                          price !== spec.price &&
+                          price === customerLastPrices[item.productSpecId];
+                        setCreateForm({ ...createForm, items });
+                      }}
+                    />
+                    {item.priceFromLastPurchase && (
+                      <p className="text-xs text-muted mt-1">
+                        根据上次客户拿货价自动调整
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
-            <Button variant="secondary" size="sm" className="mt-2" onClick={() => setCreateForm({ ...createForm, items: [...createForm.items, { productSpecId: "", quantity: 1, isGift: false }] })}>
+            <Button variant="secondary" size="sm" className="mt-2" onClick={() => setCreateForm({ ...createForm, items: [...createForm.items, { productSpecId: "", quantity: 1, isGift: false, unitPrice: 0, priceFromLastPurchase: false }] })}>
               添加产品
             </Button>
           </div>
@@ -1351,7 +1524,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
                             ? 0
                             : calcCreateReconcilePaidAmount(
                                 createForm.items,
-                                new Map(getAllSpecs().map((s) => [s.id, s.price])),
+                                buildCreateSpecPrices(),
                                 createReconcileQty
                               ),
                     });
@@ -1440,7 +1613,18 @@ export function OrdersPage({ user }: { user: SessionUser }) {
           {error && <p className="text-sm text-red-700">{error}</p>}
         </div>
         <ModalFooter>
-          <Button variant="secondary" onClick={() => setCreateOpen(false)}>取消</Button>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              if (isCreateOnly) {
+                router.push(returnTo || "/orders");
+                return;
+              }
+              setCreateOpen(false);
+            }}
+          >
+            取消
+          </Button>
           <Button onClick={handleCreate} disabled={saving}>{saving ? "提交中..." : "创建"}</Button>
         </ModalFooter>
       </Modal>
@@ -1678,7 +1862,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => shareOrder(selected)}
+                onClick={() => selected && shareOrder(selected.id)}
               >
                 <Share2 className="h-3.5 w-3.5 mr-1" />
                 分享给客户
@@ -1987,6 +2171,7 @@ export function OrdersPage({ user }: { user: SessionUser }) {
           </Button>
         </ModalFooter>
       </Modal>
+      {shareModal}
     </div>
   );
 }

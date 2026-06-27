@@ -17,6 +17,8 @@ import { Badge } from "@/components/ui/badge";
 import { Modal, ModalFooter } from "@/components/ui/modal";
 import { Input, Label, Textarea } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { useEdition } from "@/components/edition/edition-provider";
+import { CustomerPolicySection } from "@/components/customers/customer-policy-section";
 import {
   SEGMENT_LABELS,
   CHURN_LABELS,
@@ -70,6 +72,7 @@ export function Customer360Page({
   user: SessionUser;
 }) {
   const router = useRouter();
+  const { isPremiumActive } = useEdition();
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
@@ -178,9 +181,19 @@ export function Customer360Page({
           <CardTitle className="font-serif text-base">基本信息</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2 text-sm">
-          <div className="flex gap-2">
-            <Phone className="h-4 w-4 text-muted shrink-0 mt-0.5" />
-            <span>{profile.phone || "—"}</span>
+          <div className="flex gap-2 items-center">
+            <Phone className="h-4 w-4 text-muted shrink-0" />
+            <span className="flex-1">{profile.phone || "—"}</span>
+            {profile.phone && (
+              <a
+                href={`tel:${profile.phone.replace(/\s/g, "")}`}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-wine/10 text-wine hover:bg-wine/20 transition-colors shrink-0"
+                aria-label="拨打电话"
+                title="拨打电话"
+              >
+                <Phone className="h-4 w-4" />
+              </a>
+            )}
           </div>
           <div className="flex gap-2">
             <MapPin className="h-4 w-4 text-muted shrink-0 mt-0.5" />
@@ -208,28 +221,56 @@ export function Customer360Page({
       <div className="flex flex-wrap gap-2">
         {canEditFollowUp && (
           <>
-            <Link href="/orders">
-              <Button size="sm">
-                <Plus className="h-3.5 w-3.5 mr-1" />
-                新建订单
-              </Button>
-            </Link>
-            <Link href={`/follow-up?customer=${profile.id}`}>
-              <Button variant="secondary" size="sm">
-                写跟进
-              </Button>
-            </Link>
+            {isPremiumActive ? (
+              <>
+                <Link
+                  href={`/orders/new?customerId=${profile.id}&returnTo=/customers/${profile.id}`}
+                >
+                  <Button size="sm">
+                    <Plus className="h-3.5 w-3.5 mr-1" />
+                    新建订单
+                  </Button>
+                </Link>
+                <Link
+                  href={`/follow-up/write?customerId=${profile.id}&returnTo=/customers/${profile.id}`}
+                >
+                  <Button variant="secondary" size="sm">
+                    写跟进
+                  </Button>
+                </Link>
+              </>
+            ) : (
+              <>
+                <Link href="/orders">
+                  <Button size="sm">
+                    <Plus className="h-3.5 w-3.5 mr-1" />
+                    新建订单
+                  </Button>
+                </Link>
+                <Link href={`/follow-up?customer=${profile.id}`}>
+                  <Button variant="secondary" size="sm">
+                    写跟进
+                  </Button>
+                </Link>
+              </>
+            )}
             <Button variant="secondary" size="sm" onClick={() => setNotesOpen(true)}>
               编辑备注/生日
             </Button>
           </>
         )}
-        <Link href={`/customers`}>
-          <Button variant="ghost" size="sm">
-            客户列表
-          </Button>
-        </Link>
+        {!isPremiumActive && (
+          <Link href="/customers">
+            <Button variant="ghost" size="sm">
+              客户列表
+            </Button>
+          </Link>
+        )}
       </div>
+
+      {isPremiumActive && (
+        <CustomerPolicySection customerId={customerId} canEdit={canEditFollowUp} />
+      )}
 
       <Card>
         <CardHeader>

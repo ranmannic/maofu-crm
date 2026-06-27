@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency } from "@/lib/utils";
 import { SPEC_UNIT_LABELS } from "@/lib/constants";
+import { useShareLink } from "@/hooks/use-share-link";
 import type { SpecUnit } from "@/generated/prisma/client";
 
 interface CatalogProduct {
@@ -32,6 +33,7 @@ interface CatalogProduct {
 export default function CatalogDetailPage() {
   const params = useParams();
   const id = params.id as string;
+  const { shareProduct, shareModal } = useShareLink();
   const [product, setProduct] = useState<CatalogProduct | null>(null);
 
   useEffect(() => {
@@ -39,15 +41,6 @@ export default function CatalogDetailPage() {
       .then((r) => r.json())
       .then(setProduct);
   }, [id]);
-
-  async function share() {
-    const res = await fetch(`/api/products/${id}/share`, { method: "POST" });
-    const data = await res.json();
-    if (!res.ok) return alert(data.error || "失败");
-    const url = data.shareUrl || `${window.location.origin}/share/product/${data.shareToken}`;
-    await navigator.clipboard.writeText(url);
-    alert("客户分享链接已复制");
-  }
 
   if (!product) {
     return <div className="text-center py-16 text-muted">加载中...</div>;
@@ -68,7 +61,7 @@ export default function CatalogDetailPage() {
             返回
           </Button>
         </Link>
-        <Button size="sm" onClick={share}>
+        <Button size="sm" onClick={() => shareProduct(id, product.name)}>
           <Share2 className="h-3.5 w-3.5 mr-1" />
           分享给客户
         </Button>
@@ -116,6 +109,7 @@ export default function CatalogDetailPage() {
           </div>
         ))}
       </div>
+      {shareModal}
     </div>
   );
 }

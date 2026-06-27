@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency } from "@/lib/utils";
 import { SPEC_UNIT_LABELS } from "@/lib/constants";
+import { useShareLink } from "@/hooks/use-share-link";
 import type { SpecUnit } from "@/generated/prisma/client";
 
 interface CatalogSpec {
@@ -50,9 +51,9 @@ function PriceRow({ label, guide, floor }: { label: string; guide: number | null
 }
 
 export function ProductCatalogPage() {
+  const { shareProduct, shareModal, sharing } = useShareLink();
   const [products, setProducts] = useState<CatalogProduct[]>([]);
   const [loading, setLoading] = useState(true);
-  const [sharing, setSharing] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/products/catalog")
@@ -63,29 +64,6 @@ export function ProductCatalogPage() {
       })
       .catch(() => setLoading(false));
   }, []);
-
-  async function shareProduct(id: string) {
-    setSharing(id);
-    try {
-      const res = await fetch(`/api/products/${id}/share`, { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || "生成分享链接失败");
-        return;
-      }
-      const url = data.shareUrl || `${window.location.origin}/share/product/${data.shareToken}`;
-      if (navigator.share) {
-        await navigator.share({ title: "毛府酒庄产品", url });
-      } else {
-        await navigator.clipboard.writeText(url);
-        alert("分享链接已复制，可发送给客户微信查看（不含内部成本价）");
-      }
-    } catch {
-      alert("分享失败");
-    } finally {
-      setSharing(null);
-    }
-  }
 
   return (
     <div className="space-y-5">
@@ -146,8 +124,8 @@ export function ProductCatalogPage() {
                   </Link>
                   <Button
                     size="sm"
-                    onClick={() => shareProduct(p.id)}
-                    disabled={sharing === p.id}
+                    onClick={() => shareProduct(p.id, p.name)}
+                    disabled={sharing}
                   >
                     <Share2 className="h-3.5 w-3.5 mr-1" />
                     分享
@@ -158,6 +136,7 @@ export function ProductCatalogPage() {
           ))}
         </div>
       )}
+      {shareModal}
     </div>
   );
 }

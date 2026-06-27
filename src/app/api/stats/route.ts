@@ -8,6 +8,11 @@ import {
 } from "@/lib/utils";
 import { handleApiError } from "@/lib/api";
 import {
+  calcProratedFixedCost,
+  describeFixedCostPeriod,
+} from "@/lib/fixed-cost";
+import { getEditionState } from "@/lib/edition";
+import {
   calcRefundPerformanceAmount,
   syncPerformanceData,
 } from "@/lib/performance";
@@ -199,6 +204,23 @@ export async function GET(request: NextRequest) {
         )
       : undefined;
 
+    const totalProfitRevenue = isAdmin
+      ? periodOrdersForShip.reduce(
+          (s, o) =>
+            s +
+            Math.max(
+              0,
+              o.totalAmount - (o.shippingFee ?? 0) - (o.otherFee ?? 0)
+            ),
+          0
+        )
+      : undefined;
+
+    const grossProfitMargin =
+      isAdmin && totalProfit !== undefined && totalProfitRevenue && totalProfitRevenue > 0
+        ? Math.round((totalProfit / totalProfitRevenue) * 1000) / 10
+        : null;
+
     const channelMap = new Map<string, number>();
     for (const c of customers) {
       const ch = c.channel?.name || "未分类";
@@ -346,6 +368,42 @@ export async function GET(request: NextRequest) {
       collectRecords,
       isAdmin
     );
+
+    let fixedCostStats:
+      | {
+          monthlyFixedCost: number;
+          proratedFixedCost: number;
+          netProfitAfterFixedCost: number;
+          coversFixedCost: boolean;
+          periodLabel: string;
+        }
+      | undefined;
+
+    if (isAdmin) {
+      const edition = await getEditionState();
+      if (edition.edition === "PREMIUM" && edition.premiumAccess) {
+        const settings = await prisma.appSetting.findUnique({
+          where: { id: "global" },
+          select: { monthlyFixedCost: true },
+        });
+        const monthlyFixedCost = settings?.monthlyFixedCost ?? 0;
+        const proratedFixedCost = calcProratedFixedCost(
+          monthlyFixedCost,
+          start,
+          end
+        );
+        const grossProfit = totalProfit ?? 0;
+        const netProfitAfterFixedCost = grossProfit - proratedFixedCost;
+        fixedCostStats = {
+          monthlyFixedCost,
+          proratedFixedCost,
+          netProfitAfterFixedCost,
+          coversFixedCost: netProfitAfterFixedCost >= 0,
+          periodLabel: describeFixedCostPeriod(start, end),
+        };
+      }
+    }
+
     const monthlyCurves = {
       performance: buildMonthlyYoY(
         allCollectForCurves.map((r) => ({
@@ -387,6 +445,7 @@ export async function GET(request: NextRequest) {
         shippedCount: periodOrdersForShip.filter((o) => o.isShipped).length,
         unshippedCount: periodOrdersForShip.filter((o) => !o.isShipped).length,
         totalProfit,
+        grossProfitMargin,
       },
       refundStats: {
         totalAmount: totalRefundPerformance,
@@ -395,6 +454,7 @@ export async function GET(request: NextRequest) {
       performanceDetails,
       salesStats,
       monthlyCurves,
+      fixedCostStats,
       salesUsers: isAdmin ? salesUsers : undefined,
     });
   } catch (error) {
