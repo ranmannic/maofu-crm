@@ -15,11 +15,16 @@ export function Sidebar({ user }: { user: SessionUser }) {
   const { open, close, setOpen } = useSidebar();
   const { isPremiumActive, premiumAccess, trialDaysLeft, resetExperience } =
     useEdition();
-  const items = navItems.filter(
-    (item) =>
-      item.roles.includes(user.role) &&
-      (!item.premiumOnly || isPremiumActive)
-  );
+  const items = navItems.filter((item) => {
+    if (!item.roles.includes(user.role)) return false;
+    if (item.premiumOnly && !isPremiumActive) return false;
+    if (item.hideInPremium && isPremiumActive) {
+      // 高级版：销售仍保留独立「产品展示」入口
+      if (item.href === "/catalog" && user.role === "SALES") return true;
+      return false;
+    }
+    return true;
+  });
 
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" });

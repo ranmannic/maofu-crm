@@ -41,7 +41,8 @@ export async function middleware(request: NextRequest) {
 
     if (
       pathname.startsWith("/users") ||
-      pathname.startsWith("/channels")
+      pathname.startsWith("/channels") ||
+      pathname.startsWith("/system")
     ) {
       if (role !== "ADMIN") {
         if (pathname.startsWith("/api/")) {

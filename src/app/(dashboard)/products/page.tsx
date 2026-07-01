@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { Plus, Pencil, Trash2, Upload, Share2, Star } from "lucide-react";
+import Link from "next/link";
+import { Plus, Pencil, Trash2, Upload, Share2, Star, Wine } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Modal, ModalFooter } from "@/components/ui/modal";
@@ -9,6 +10,7 @@ import { Input, Label, Textarea, Select, QtyInput } from "@/components/ui/input"
 import { formatCurrency } from "@/lib/utils";
 import { SPEC_UNIT_LABELS, SPEC_UNIT_OPTIONS } from "@/lib/constants";
 import { useShareLink } from "@/hooks/use-share-link";
+import { useEdition } from "@/components/edition/edition-provider";
 import type { SpecUnit } from "@/generated/prisma/client";
 
 interface ProductImage {
@@ -61,6 +63,7 @@ const emptyRetail = {
 
 export default function ProductsPage() {
   const { shareProduct, shareModal } = useShareLink();
+  const { isPremiumActive } = useEdition();
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [productModal, setProductModal] = useState(false);
@@ -306,6 +309,15 @@ export default function ProductsPage() {
           </p>
         </div>
         <div className="page-header-actions">
+          {isPremiumActive && (
+            <Link
+              href="/catalog"
+              className="inline-flex items-center justify-center rounded-lg font-medium transition-colors bg-paper border border-border text-foreground hover:bg-background font-serif px-4 py-2 text-sm w-full sm:w-auto"
+            >
+              <Wine className="h-4 w-4 mr-1" />
+              产品展示
+            </Link>
+          )}
           <Button onClick={openProductCreate}>
             <Plus className="h-4 w-4 mr-1" />
             新增产品

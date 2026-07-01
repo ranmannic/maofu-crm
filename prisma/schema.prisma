@@ -85,6 +85,11 @@ enum AppEdition {
   PREMIUM
 }
 
+enum CommissionKind {
+  PERCENT
+  FIXED
+}
+
 model AppSetting {
   id                    String     @id @default("global")
   edition               AppEdition @default(STANDARD)
@@ -109,6 +114,7 @@ model User {
   salesOrders   Order[]       @relation("SalesOrders")
   handledOrders Order[]       @relation("HandledOrders")
   sessions      UserSession[]
+  commissionRuleTargets SalesCommissionRuleSales[]
 }
 
 model UserSession {
@@ -221,6 +227,7 @@ model Product {
 
   specs  ProductSpec[]
   images ProductImage[]
+  commissionRules SalesCommissionRule[]
 }
 
 model ProductImage {
@@ -256,6 +263,36 @@ model ProductSpec {
   updatedAt DateTime @updatedAt
 
   orderItems OrderItem[]
+  commissionRules SalesCommissionRule[]
+}
+
+model SalesCommissionRule {
+  id                String         @id @default(cuid())
+  productId         String
+  product           Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productSpecId     String?
+  productSpec       ProductSpec?   @relation(fields: [productSpecId], references: [id], onDelete: Cascade)
+  appliesToAllSales Boolean        @default(true)
+  kind              CommissionKind @default(PERCENT)
+  value             Float
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  salesTargets SalesCommissionRuleSales[]
+
+  @@index([productId])
+  @@index([productSpecId])
+}
+
+model SalesCommissionRuleSales {
+  id      String              @id @default(cuid())
+  ruleId  String
+  rule    SalesCommissionRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  salesId String
+  sales   User                @relation(fields: [salesId], references: [id], onDelete: Cascade)
+
+  @@unique([ruleId, salesId])
+  @@index([salesId])
 }
 
 model Order {

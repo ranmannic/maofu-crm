@@ -207,7 +207,7 @@ git add prisma/init.db
 INIT_DB=false
 ```
 
-并在「账号管理」中**修改全部默认密码**（见 [附录 C](#附录-c演示账号初始密码)）。
+并在「账号管理」（普通版）或「系统管理 → 账号管理」（高级版）中**修改全部默认密码**（见 [附录 C](#附录-c演示账号初始密码)）。
 
 > ⚠️ **切勿在生产环境执行** `npm run db:init`：该命令会用 `init.db` **整库覆盖**当前 `DATABASE_URL` 指向的数据库，与 Docker entrypoint 的「空卷复制」不同，对已有 `prod.db` 是毁灭性操作。
 
@@ -360,7 +360,10 @@ curl -I http://127.0.0.1:3000/login
 - [ ] v0.6+ 升级：收货地址、凭证、生日等新表已 migrate
 - [ ] v0.8+ 升级：确认 `maofu-uploads` 卷已挂载并备份
 - [ ] v0.9+ 升级：核销审核（`ReconciliationReviewStatus`）、现场铺货发货方式；职能可管理产品、导出订单 Excel
+- [ ] v1.0+ 升级：双版本/库存/客户政策/月度固定成本三个迁移已 `migrate deploy`（见 7.3.2）；新字段默认值正常，无需回填
+- [ ] v1.1+ 升级：销售提成三个迁移已 `migrate deploy`（见 7.3.3）；高级版导航合并（系统管理、产品展示入口）；建议执行 `sync-performance` 确保提成统计有业绩数据
 - [ ] 抽查：订单导出、账期核销待审核、职能工作台「核销待审核」提醒
+- [ ] v1.1+ 抽查：高级版「系统管理」（渠道/账号）、「销售提成」规则与月度统计、产品管理→产品展示、职能账号产品展示
 - [ ] 上线后登录页无默认密码提示；确认已修改全部账号密码
 
 ### 6.2 临时开启启动时自动回填
@@ -410,16 +413,67 @@ curl -I http://127.0.0.1:3000/login
 | v0.7+ | 全站移动端适配（抽屉导航、订单卡片、紧凑筛选/统计） | 无 schema 变更，拉代码重建镜像即可 |
 | v0.8+ | 职能工作台、产品相册/零售价/分享、客户 360、订单分享；uploads 卷 | 通常仅需 migrate；**务必挂载并备份 uploads 卷** |
 | v0.9+ | 销售核销需审核、现场铺货、订单 Excel 导出、职能产品管理、管理员改客户手机号等 | 通常仅需 migrate（`20260623140000_reconciliation_review_on_site_stocking` 等） |
+| v1.0+ | **普通版/高级版双版本**、高级版库存管理、客户政策（拿货价/备注）、首页自定义日期与盈利分析（月度固定成本）、分享改为复制链接/微信分享 | **仅需 migrate**（见下方 7.3.2）；新字段均有默认值，无需手动回填 |
+| v1.1+ | **销售提成**（高级版 ADMIN）、高级版导航合并（系统管理、产品展示入口）、职能账号可访问产品展示 | **migrate + 建议 sync-performance**（见 7.3.3） |
 
-详细字段说明见历史版本记录；当前仓库含 v0.8.0 基线及后续功能迭代。
+详细字段说明见历史版本记录；当前仓库含 v0.8.0 基线及后续功能迭代（含 v1.0 双版本、v1.1 销售提成）。
+
+### 7.3.2 v1.0 数据结构变更与老数据兼容（重要）
+
+本次升级**全部为增量变更，对已有生产数据安全**，由 entrypoint 的 `prisma migrate deploy` 自动按序执行，无需手动改库或回填：
+
+| 迁移目录 | 变更内容 | 老数据初始化方式 |
+|----------|----------|------------------|
+| `20260626210000_premium_edition_inventory` | 新建 `AppSetting` 表（版本/试用状态）并写入 `global` 行；`ProductSpec` 新增 `stockQty` | 新表自动插入 `('global','STANDARD')`；`stockQty` 对已有规格 **DEFAULT 0** |
+| `20260627041217_add_customer_price_policy_note` | 新建 `CustomerPricePolicyNote` 表（客户政策备注） | 全新表，按需写入；老客户无记录时前端展示「暂无」 |
+| `20260627043839_add_monthly_fixed_cost` | `AppSetting` 增加 `monthlyFixedCost` | 表重定义经 `INSERT...SELECT` **保留原有版本/试用字段**；新列对已有行 **DEFAULT 0** |
+
+> ✅ **数据安全要点**：
+> - 三个迁移均为「新建表 / 加默认值列 / 表重定义保留旧数据」，不删除业务数据；
+> - `add_monthly_fixed_cost` 虽为 SQLite 表重定义（drop+create），但通过 `INSERT INTO new_AppSetting ... SELECT ... FROM AppSetting` 完整保留试用/订阅状态；
+> - 升级**无需** `RUN_SYNC`、无需 `sync-performance` / `sync-customer-status`（除非首页业绩历史数据为 0）；
+> - 升级前仍**必须**按 [6.0 节](#60-生产更新安全流程推荐按顺序执行) 备份 `prod.db` 与 uploads 卷。
+
+升级后抽查：高级版切换、库存管理（`/inventory`）、客户 360 客户政策、首页「订单毛利」毛利率与「点击盈利分析」、订单/产品「分享」弹窗复制链接。
+
+### 7.3.3 v1.1 销售提成与导航调整（重要）
+
+本次升级**对已有订单/客户/产品等业务数据安全**，由 entrypoint 的 `prisma migrate deploy` 自动按序执行三个迁移：
+
+| 迁移目录 | 变更内容 | 老数据初始化方式 |
+|----------|----------|------------------|
+| `20260630142550_add_sales_commission_rules` | 新建 `SalesCommissionRule` 表（提成规则） | 全新表，线上默认无数据；不影响现有业务 |
+| `20260630144014_commission_rules_sales_targets` | 规则改为「全部销售 / 指定销售」；新建 `SalesCommissionRuleSales` 关联表；移除 `channelId` | 若曾存在带 `salesId` 的旧规则，迁移脚本会写入关联表并将 `appliesToAllSales=false`；`channelId` 废弃（原未上线可忽略） |
+| `20260630145235_perf_record_type_eventat_index` | `PerformanceRecord` 增加 `(type, eventAt)` 索引 | 仅加索引，不改数据 |
+
+> ✅ **数据安全要点**：
+> - 三个迁移均为「新建表 / 加索引 / 表重定义保留规则数据」，**不删除**订单、客户、业绩等业务数据；
+> - 提成统计依赖 `PerformanceRecord`（收款/退款时增量写入）。若历史订单缺少业绩记录，升级后执行一次：
+>   ```bash
+>   docker compose exec app npx tsx prisma/sync-performance.ts
+>   ```
+> - **无需** `RUN_SYNC`、**无需** `sync-customer-status`（除非客户状态本身有问题）；
+> - 升级前仍**必须**备份 `prod.db` 与 uploads 卷。
+
+**功能与路由变更（高级版）：**
+
+| 模块 | 说明 | 访问路径 |
+|------|------|----------|
+| 系统管理 | 合并渠道管理 + 账号管理（Tab 切换） | `/system`（**ADMIN**，高级版侧栏） |
+| 销售提成 | 按产品/规格/销售配置规则；月度提成统计 | `/commissions`（**ADMIN**，高级版） |
+| 产品展示 | 从侧栏隐藏；产品管理页右上角入口 | `/catalog`（ADMIN/OPERATIONS 从 `/products` 进入；SALES 仍保留侧栏） |
+
+升级后抽查：高级版「系统管理」两个 Tab、销售提成规则保存与月度统计、产品管理→产品展示（含职能账号）、普通版侧栏仍为独立「渠道管理」「账号管理」「产品展示」。
 
 ### 7.3.1 功能与路由说明（v0.8+ / v0.9+）
 
 | 模块 | 说明 | 访问路径 / 备注 |
 |------|------|-----------------|
 | 职能工作台 | 待发货、待收款、**核销待审核**、待核销；豆腐块可筛选 | `/workbench`（**OPERATIONS**；登录后自动跳转） |
-| 产品管理 | 相册、规格、零售价体系 | `/products`（**ADMIN**、**OPERATIONS**） |
-| 产品展示 | 销售侧目录与分享链接 | `/catalog`（ADMIN、SALES） |
+| 产品管理 | 相册、规格、零售价体系；**高级版**右上角「产品展示」入口 | `/products`（**ADMIN**、**OPERATIONS**） |
+| 产品展示 | 销售侧目录与分享链接；高级版 ADMIN/OPERATIONS 从产品管理进入 | `/catalog`（ADMIN、SALES、**OPERATIONS**） |
+| 系统管理 | 渠道 + 账号（**高级版 ADMIN**） | `/system` |
+| 销售提成 | 提成规则与月度统计（**高级版 ADMIN**） | `/commissions` |
 | 账期核销 | 销售提交核销申请待审核；职能/管理员可直接核销 | `/credit` |
 | 订单导出 | 按筛选条件导出 Excel；管理员含毛利字段 | 订单管理页（ADMIN、OPERATIONS） |
 | 客户 360 | 客户概览、订单与跟进汇总 | `/customers/[id]` |
