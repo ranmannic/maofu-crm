@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ArrowLeft, Share2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useAppNavigation } from "@/hooks/use-app-navigation";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency } from "@/lib/utils";
 import { SPEC_UNIT_LABELS } from "@/lib/constants";
@@ -33,6 +33,7 @@ interface CatalogProduct {
 export default function CatalogDetailPage() {
   const params = useParams();
   const id = params.id as string;
+  const { goBack } = useAppNavigation();
   const { shareProduct, shareModal } = useShareLink();
   const [product, setProduct] = useState<CatalogProduct | null>(null);
 
@@ -55,12 +56,10 @@ export default function CatalogDetailPage() {
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-2">
-        <Link href="/catalog">
-          <Button variant="ghost" size="sm">
-            <ArrowLeft className="h-4 w-4 mr-1" />
-            返回
-          </Button>
-        </Link>
+        <Button variant="ghost" size="sm" onClick={() => goBack("/catalog")}>
+          <ArrowLeft className="h-4 w-4 mr-1" />
+          返回
+        </Button>
         <Button size="sm" onClick={() => shareProduct(id, product.name)}>
           <Share2 className="h-3.5 w-3.5 mr-1" />
           分享给客户

@@ -1,6 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
 import { randomBytes } from "crypto";
+import { compressImageBuffer, isCompressibleImage } from "@/lib/image-compress";
 
 export const VOUCHER_MAX_BYTES = 10 * 1024 * 1024;
 
@@ -31,13 +32,17 @@ export async function saveVoucherFile(orderId: string, file: File) {
   const dir = path.join(getUploadsRoot(), orderId);
   await fs.mkdir(dir, { recursive: true });
 
-  const safeName = sanitizeFileName(file.name);
+  const raw = Buffer.from(await file.arrayBuffer());
+  const compressed = isCompressibleImage(file.type)
+    ? await compressImageBuffer(raw, file.type, file.name)
+    : { buffer: raw, mimeType: file.type, fileName: file.name };
+
+  const safeName = sanitizeFileName(compressed.fileName);
   const storageKey = `${orderId}/${randomBytes(8).toString("hex")}-${safeName}`;
   const absPath = path.join(getUploadsRoot(), storageKey);
-  const buffer = Buffer.from(await file.arrayBuffer());
-  await fs.writeFile(absPath, buffer);
+  await fs.writeFile(absPath, compressed.buffer);
 
-  return { storageKey, fileName: file.name, mimeType: file.type };
+  return { storageKey, fileName: file.name, mimeType: compressed.mimeType };
 }
 
 export function resolveVoucherPath(storageKey: string) {

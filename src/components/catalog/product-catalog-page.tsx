@@ -1,8 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
+import { useEffect, useState, useRef } from "react";
 import { Share2, Wine } from "lucide-react";
+import { AppNavLink } from "@/components/navigation/app-nav-link";
+import {
+  useListPageSnapshot,
+  useRestoreListPageScroll,
+} from "@/hooks/use-saved-list-page-state";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -50,12 +54,35 @@ function PriceRow({ label, guide, floor }: { label: string; guide: number | null
   );
 }
 
+const CATALOG_ROUTE_KEY = "/catalog";
+
+interface CatalogPageState {
+  products?: CatalogProduct[];
+  scrollY?: number;
+}
+
 export function ProductCatalogPage() {
   const { shareProduct, shareModal, sharing } = useShareLink();
-  const [products, setProducts] = useState<CatalogProduct[]>([]);
-  const [loading, setLoading] = useState(true);
+  const snapshot = useListPageSnapshot<CatalogPageState>(CATALOG_ROUTE_KEY);
+  const saved = snapshot?.data;
+  const restoreOnMount = useRef(saved?.products !== undefined);
+
+  const [products, setProducts] = useState<CatalogProduct[]>(
+    () => saved?.products ?? []
+  );
+  const [loading, setLoading] = useState(() => saved?.products === undefined);
+
+  useRestoreListPageScroll(
+    CATALOG_ROUTE_KEY,
+    snapshot?.scrollY,
+    !loading
+  );
 
   useEffect(() => {
+    const silent = restoreOnMount.current;
+    if (restoreOnMount.current) restoreOnMount.current = false;
+    if (!silent) setLoading(true);
+
     fetch("/api/products/catalog")
       .then((r) => r.json())
       .then((data) => {
@@ -117,11 +144,16 @@ export function ProductCatalogPage() {
                   </div>
                 ))}
                 <div className="flex gap-2 pt-1">
-                  <Link href={`/catalog/${p.id}`} className="flex-1">
+                  <AppNavLink
+                    href={`/catalog/${p.id}`}
+                    className="flex-1"
+                    pageStateKey={CATALOG_ROUTE_KEY}
+                    pageState={{ products }}
+                  >
                     <Button variant="secondary" size="sm" className="w-full">
                       查看详情
                     </Button>
-                  </Link>
+                  </AppNavLink>
                   <Button
                     size="sm"
                     onClick={() => shareProduct(p.id, p.name)}

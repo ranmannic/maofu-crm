@@ -1,4 +1,5 @@
 import { markCustomerClosedOnPayment } from "@/lib/customer-status";
+import { recoverBadDebtStock } from "@/lib/inventory";
 import { prisma } from "@/lib/prisma";
 import { toBottleCount, resolveBottlesPerUnit } from "@/lib/unit-convert";
 import { syncPaymentFields, calcPerformanceAmount } from "@/lib/order-math";
@@ -284,6 +285,12 @@ export async function markBadDebt(
   if (!order) throw new Error("订单不存在");
   if (order.creditStatus === "SETTLED") throw new Error("已结清订单不能标记坏账");
 
+  const recoveredStock: {
+    orderItemId: string;
+    productSpecId: string;
+    recoveredQty: number;
+  }[] = [];
+
   await prisma.$transaction(async (tx) => {
     if (order.creditStatus !== "ACTIVE") {
       for (const item of order.items) {
@@ -345,6 +352,11 @@ export async function markBadDebt(
               },
             });
           }
+          recoveredStock.push({
+            orderItemId,
+            productSpecId: line.productSpecId,
+            recoveredQty: recovered,
+          });
         }
       } else if (qtyInput > 0) {
         const unrecovered = Math.min(Math.max(0, qtyInput), line.unreconciledQty);
@@ -403,6 +415,13 @@ export async function markBadDebt(
       },
     });
   });
+
+  if (data.goodsRecovered && recoveredStock.length > 0) {
+    await recoverBadDebtStock(orderId, recoveredStock, {
+      id: userId,
+      name: userName,
+    });
+  }
 }
 
 type ReconciliationPaymentInput = {
@@ -844,5 +863,87 @@ export async function getCreditStats(salesId?: string) {
     badDebtAmount,
     badDebtRecoveredQty,
     badDebtUnrecoveredQty,
+  };
+}
+
+export type CreditAgingBucket = "all" | "d30" | "d60" | "d90" | "d90plus";
+
+export function creditOrderAgeDays(orderedAt: Date | string): number {
+  const t = typeof orderedAt === "string" ? new Date(orderedAt).getTime() : orderedAt.getTime();
+  return Math.floor((Date.now() - t) / (1000 * 60 * 60 * 24));
+}
+
+export function creditOrderAgingBucket(
+  orderedAt: Date | string
+): Exclude<CreditAgingBucket, "all"> {
+  const days = creditOrderAgeDays(orderedAt);
+  if (days <= 30) return "d30";
+  if (days <= 60) return "d60";
+  if (days <= 90) return "d90";
+  return "d90plus";
+}
+
+export function matchesCreditAgingBucket(
+  orderedAt: Date | string,
+  bucket: CreditAgingBucket
+): boolean {
+  if (bucket === "all") return true;
+  return creditOrderAgingBucket(orderedAt) === bucket;
+}
+
+export async function getCreditAgingStats(salesId?: string) {
+  const orders = await prisma.order.findMany({
+    where: {
+      deletedAt: null,
+      creditStatus: "ACTIVE",
+      ...(salesId ? { salesId } : {}),
+    },
+    select: {
+      id: true,
+      customerId: true,
+      orderedAt: true,
+      totalAmount: true,
+      paidAmount: true,
+    },
+  });
+
+  const emptyBucket = () => ({
+    orderCount: 0,
+    customerIds: new Set<string>(),
+    amount: 0,
+  });
+
+  const buckets = {
+    all: emptyBucket(),
+    d30: emptyBucket(),
+    d60: emptyBucket(),
+    d90: emptyBucket(),
+    d90plus: emptyBucket(),
+  };
+
+  for (const order of orders) {
+    const unreconciled = Math.max(0, order.totalAmount - order.paidAmount);
+    if (unreconciled <= 0) continue;
+
+    const bucket = creditOrderAgingBucket(order.orderedAt);
+    for (const key of ["all", bucket] as const) {
+      buckets[key].orderCount += 1;
+      buckets[key].customerIds.add(order.customerId);
+      buckets[key].amount += unreconciled;
+    }
+  }
+
+  const serialize = (b: ReturnType<typeof emptyBucket>) => ({
+    orderCount: b.orderCount,
+    customerCount: b.customerIds.size,
+    amount: b.amount,
+  });
+
+  return {
+    all: serialize(buckets.all),
+    d30: serialize(buckets.d30),
+    d60: serialize(buckets.d60),
+    d90: serialize(buckets.d90),
+    d90plus: serialize(buckets.d90plus),
   };
 }

@@ -12,6 +12,7 @@ import {
   syncPaymentFields,
 } from "@/lib/order-math";
 import { processPaymentWithReconciliation, ensureCreditOrderActive, requiresPaymentReconciliation } from "@/lib/credit";
+import { deductOrderStock, restoreOrderStock } from "@/lib/inventory";
 import {
   calcRefundPerformanceAmount,
   recordRefundPerformance,
@@ -351,6 +352,25 @@ export async function PATCH(
       });
     });
 
+    if (body.shipping?.isShipped && !existing.isShipped) {
+      try {
+        await deductOrderStock(id, { id: session.id, name: session.name });
+      } catch (err) {
+        return apiError(
+          err instanceof Error ? err.message : "发货扣减库存失败"
+        );
+      }
+    } else if (
+      body.shipping &&
+      body.shipping.isShipped === false &&
+      existing.isShipped
+    ) {
+      await restoreOrderStock(id, "SHIP_CANCEL_IN", {
+        id: session.id,
+        name: session.name,
+      });
+    }
+
     if (body.shipping?.isShipped) {
       await ensureCreditOrderActive(id);
     }
@@ -430,6 +450,13 @@ export async function DELETE(
 
     if (session.role === "SALES" && existing.salesId !== session.id) {
       return apiError("无权限", 403);
+    }
+
+    if (existing.isShipped && existing.stockDeducted) {
+      await restoreOrderStock(id, "ORDER_DELETE_IN", {
+        id: session.id,
+        name: session.name,
+      });
     }
 
     await prisma.order.update({

@@ -11,6 +11,7 @@ import { formatCurrency } from "@/lib/utils";
 import { SPEC_UNIT_LABELS, SPEC_UNIT_OPTIONS } from "@/lib/constants";
 import { useShareLink } from "@/hooks/use-share-link";
 import { useEdition } from "@/components/edition/edition-provider";
+import { ProductStockConfigModal } from "@/components/products/product-stock-config-modal";
 import type { SpecUnit } from "@/generated/prisma/client";
 
 interface ProductImage {
@@ -36,6 +37,8 @@ interface ProductSpec {
   groupFloorPrice: number | null;
   wholesaleGuidePrice: number | null;
   wholesaleFloorPrice: number | null;
+  stockConfigured?: boolean;
+  maxSellable?: number | null;
 }
 
 interface Product {
@@ -93,6 +96,11 @@ export default function ProductsPage() {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [stockConfigTarget, setStockConfigTarget] = useState<{
+    productId: string;
+    productName: string;
+    spec: ProductSpec;
+  } | null>(null);
 
   async function load() {
     setLoading(true);
@@ -209,6 +217,7 @@ export default function ProductsPage() {
       setSaving(false);
       return;
     }
+
     setSpecModal(false);
     await load();
     setSaving(false);
@@ -385,9 +394,12 @@ export default function ProductsPage() {
                         <th className="pb-2 font-medium">缩略图</th>
                         <th className="pb-2 font-medium">销售价</th>
                         <th className="pb-2 font-medium">成本</th>
-                        <th className="pb-2 font-medium">零售指导价</th>
-                        <th className="pb-2 font-medium">团购指导价</th>
-                        <th className="pb-2 font-medium">批发指导价</th>
+                        <th className="pb-2 font-medium hidden lg:table-cell">零售指导价</th>
+                        <th className="pb-2 font-medium hidden lg:table-cell">团购指导价</th>
+                        <th className="pb-2 font-medium hidden lg:table-cell">批发指导价</th>
+                        {isPremiumActive && (
+                          <th className="pb-2 font-medium">最大可售数</th>
+                        )}
                         <th className="pb-2 font-medium">操作</th>
                       </tr>
                     </thead>
@@ -410,16 +422,42 @@ export default function ProductsPage() {
                           </td>
                           <td className="py-2">{formatCurrency(s.price)}</td>
                           <td className="py-2">{formatCurrency(s.cost)}</td>
-                          <td className="py-2 text-xs">
+                          <td className="py-2 text-xs hidden lg:table-cell">
                             {s.retailGuidePrice != null ? formatCurrency(s.retailGuidePrice) : "—"}
                           </td>
-                          <td className="py-2 text-xs">
+                          <td className="py-2 text-xs hidden lg:table-cell">
                             {s.groupGuidePrice != null ? formatCurrency(s.groupGuidePrice) : "—"}
                           </td>
-                          <td className="py-2 text-xs">
+                          <td className="py-2 text-xs hidden lg:table-cell">
                             {s.wholesaleGuidePrice != null ? formatCurrency(s.wholesaleGuidePrice) : "—"}
                           </td>
+                          {isPremiumActive && (
+                            <td className="py-2 text-sm">
+                              {s.stockConfigured ? (
+                                <span className="font-medium text-wine">
+                                  {s.maxSellable ?? 0} {SPEC_UNIT_LABELS[s.unitType]}
+                                </span>
+                              ) : (
+                                <span className="text-muted">尚未配置</span>
+                              )}
+                            </td>
+                          )}
                           <td className="py-2">
+                            {isPremiumActive && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setStockConfigTarget({
+                                    productId: p.id,
+                                    productName: p.name,
+                                    spec: s,
+                                  })
+                                }
+                                className="text-wine hover:underline mr-3"
+                              >
+                                配置库存
+                              </button>
+                            )}
                             <button onClick={() => openSpecEdit(p.id, s)} className="text-wine hover:underline mr-3">
                               编辑
                             </button>
@@ -622,7 +660,13 @@ export default function ProductsPage() {
             </div>
             <div>
               <Label>折合瓶数</Label>
-              <QtyInput min={1} value={specForm.bottlesPerUnit} onChange={(n) => setSpecForm({ ...specForm, bottlesPerUnit: n || 1 })} />
+              <QtyInput
+                min={1}
+                value={specForm.bottlesPerUnit}
+                onChange={(n) =>
+                  setSpecForm({ ...specForm, bottlesPerUnit: n || 1 })
+                }
+              />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -681,6 +725,20 @@ export default function ProductsPage() {
           <Button onClick={saveSpec} disabled={saving}>{saving ? "保存中..." : "保存"}</Button>
         </ModalFooter>
       </Modal>
+
+      {stockConfigTarget && (
+        <ProductStockConfigModal
+          open={!!stockConfigTarget}
+          onClose={() => setStockConfigTarget(null)}
+          onSaved={() => {
+            void load();
+          }}
+          productId={stockConfigTarget.productId}
+          productName={stockConfigTarget.productName}
+          spec={stockConfigTarget.spec}
+        />
+      )}
+
       {shareModal}
     </div>
   );

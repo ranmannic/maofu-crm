@@ -5,11 +5,13 @@ import { requireSession } from "@/lib/auth";
 import { apiError, handleApiError } from "@/lib/api";
 import { getEditionState, isPremiumEdition } from "@/lib/edition";
 import {
-  hasDuplicateRule,
+  ensureGlobalDefaultRule,
   includeRule,
   normalizeRuleInput,
   ruleCreateData,
   serializeRule,
+  sortSerializedRules,
+  validateRuleConflict,
   validateRuleInput,
 } from "@/lib/commission-rules";
 
@@ -33,19 +35,22 @@ const ruleSchema = z.object({
 export async function GET(request: NextRequest) {
   try {
     await requirePremiumAdmin();
+    await ensureGlobalDefaultRule();
+
     const productId = new URL(request.url).searchParams.get("productId") || undefined;
 
     const rules = await prisma.salesCommissionRule.findMany({
-      where: productId ? { productId } : undefined,
+      where: productId
+        ? {
+            OR: [{ isGlobalDefault: true }, { productId }],
+          }
+        : undefined,
       include: includeRule,
-      orderBy: [
-        { product: { name: "asc" } },
-        { productSpecId: "asc" },
-        { appliesToAllSales: "desc" },
-      ],
     });
 
-    return NextResponse.json(rules.map(serializeRule));
+    return NextResponse.json(
+      sortSerializedRules(rules.map(serializeRule))
+    );
   } catch (error) {
     if (error instanceof Error && error.message === "PREMIUM_REQUIRED") {
       return apiError("销售提成为高级版功能", 403);
@@ -63,16 +68,19 @@ export async function POST(request: NextRequest) {
     const relationError = await validateRuleInput(data);
     if (relationError) return apiError(relationError);
 
-    if (await hasDuplicateRule(data)) {
-      return apiError("相同维度的提成规则已存在");
-    }
+    const conflict = await validateRuleConflict(data);
+    if (conflict.error) return apiError(conflict.error);
 
     const rule = await prisma.salesCommissionRule.create({
       data: ruleCreateData(data),
       include: includeRule,
     });
 
-    return NextResponse.json(serializeRule(rule), { status: 201 });
+    const payload = serializeRule(rule);
+    return NextResponse.json(
+      conflict.warning ? { ...payload, warning: conflict.warning } : payload,
+      { status: 201 }
+    );
   } catch (error) {
     if (error instanceof z.ZodError) {
       return apiError(error.issues[0]?.message || "参数错误");

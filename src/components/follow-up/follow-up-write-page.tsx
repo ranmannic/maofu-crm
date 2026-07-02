@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useAppNavigation } from "@/hooks/use-app-navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label, Textarea } from "@/components/ui/input";
 import type { SessionUser } from "@/lib/auth-types";
@@ -27,9 +28,11 @@ export function FollowUpWritePage({
 }: {
   user: SessionUser;
   customerId: string;
-  returnTo: string;
+  returnTo?: string;
 }) {
   const router = useRouter();
+  const { goBack } = useAppNavigation();
+  const backTarget = returnTo || `/customers/${customerId}`;
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<CustomerProfile | null>(null);
   const [form, setForm] = useState({
@@ -48,14 +51,14 @@ export function FollowUpWritePage({
       const data = await res.json();
       if (!res.ok) {
         alert(data.error || "加载失败");
-        router.push(returnTo);
+        goBack(backTarget);
         return;
       }
       setProfile(data);
       setLoading(false);
     }
     load();
-  }, [customerId, returnTo, router]);
+  }, [customerId, backTarget, router]);
 
   async function handleSave() {
     setSaving(true);
@@ -71,7 +74,7 @@ export function FollowUpWritePage({
       setSaving(false);
       return;
     }
-    router.push(returnTo);
+    goBack(backTarget);
   }
 
   if (loading || !profile) {
@@ -81,7 +84,7 @@ export function FollowUpWritePage({
   return (
     <div className="space-y-5 max-w-2xl">
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="sm" onClick={() => router.push(returnTo)}>
+        <Button variant="ghost" size="sm" onClick={() => goBack(backTarget)}>
           <ArrowLeft className="h-4 w-4 mr-1" />
           返回
         </Button>
@@ -140,7 +143,7 @@ export function FollowUpWritePage({
           </div>
           {error && <p className="text-sm text-red-700">{error}</p>}
           <div className="flex justify-end gap-3 pt-2">
-            <Button variant="secondary" onClick={() => router.push(returnTo)}>
+            <Button variant="secondary" onClick={() => goBack(backTarget)}>
               取消
             </Button>
             <Button onClick={handleSave} disabled={saving}>

@@ -30,6 +30,7 @@ async function fetchCommissionRules(): Promise<CommissionRuleRecord[]> {
   });
   return rules.map((r) => ({
     id: r.id,
+    isGlobalDefault: r.isGlobalDefault,
     productId: r.productId,
     productSpecId: r.productSpecId,
     appliesToAllSales: r.appliesToAllSales,

@@ -100,6 +100,30 @@ interface CreditStats {
   badDebtUnrecoveredQty: number;
 }
 
+type CreditAgingBucket = "all" | "d30" | "d60" | "d90" | "d90plus";
+
+interface AgingBucketStats {
+  orderCount: number;
+  customerCount: number;
+  amount: number;
+}
+
+interface CreditAgingStats {
+  all: AgingBucketStats;
+  d30: AgingBucketStats;
+  d60: AgingBucketStats;
+  d90: AgingBucketStats;
+  d90plus: AgingBucketStats;
+}
+
+const AGING_TABS: { key: CreditAgingBucket; label: string }[] = [
+  { key: "all", label: "全部" },
+  { key: "d30", label: "30天内" },
+  { key: "d60", label: "31–60天" },
+  { key: "d90", label: "61–90天" },
+  { key: "d90plus", label: "90天以上" },
+];
+
 function getCreditOrderOverdueLevel(order: CreditOrder): "none" | "month" | "quarter" {
   if (isCreditOrderFullySettled(order)) return "none";
   const diffDays =
@@ -135,6 +159,9 @@ export function CreditPage({ user }: { user: SessionUser }) {
     user.role === "SALES"
   );
   const [stats, setStats] = useState<CreditStats | null>(null);
+  const [agingStats, setAgingStats] = useState<CreditAgingStats | null>(null);
+  const [agingBucket, setAgingBucket] = useState<CreditAgingBucket>("all");
+  const [appliedAging, setAppliedAging] = useState<CreditAgingBucket>("all");
   const [customers, setCustomers] = useState<CreditCustomer[]>([]);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<"active" | "settled">("active");
@@ -171,10 +198,12 @@ export function CreditPage({ user }: { user: SessionUser }) {
     const params = new URLSearchParams({ view: appliedView });
     if (appliedQ) params.set("customer", appliedQ);
     if (appliedOrderNo) params.set("orderNo", appliedOrderNo);
+    if (appliedView === "active") params.set("aging", appliedAging);
     const res = await fetch(`/api/credit?${params}`);
     if (res.ok) {
       const data = await res.json();
       setStats(data.stats ?? null);
+      setAgingStats(data.agingStats ?? null);
       setCustomers(data.customers);
       setSettledOrderCount(data.settledOrderCount ?? 0);
       setCanEdit(data.canEdit ?? false);
@@ -182,7 +211,7 @@ export function CreditPage({ user }: { user: SessionUser }) {
       setCanSubmitReconciliation(data.canSubmitReconciliation ?? false);
     }
     setLoading(false);
-  }, [appliedQ, appliedOrderNo, appliedView]);
+  }, [appliedQ, appliedOrderNo, appliedView, appliedAging]);
 
   useEffect(() => {
     load();
@@ -201,6 +230,12 @@ export function CreditPage({ user }: { user: SessionUser }) {
     setAppliedQ(customerQ);
     setAppliedOrderNo(orderNoQ);
     setAppliedView(viewMode);
+    setAppliedAging(agingBucket);
+  }
+
+  function switchAging(bucket: CreditAgingBucket) {
+    setAgingBucket(bucket);
+    setAppliedAging(bucket);
   }
 
   function switchView(mode: "active" | "settled") {
@@ -380,23 +415,76 @@ export function CreditPage({ user }: { user: SessionUser }) {
       </div>
 
       {stats && !isSettledView && (
-        <div className="stat-tile-grid cols-5 gap-3">
-          <StatCard title="未核销数量" value={`${stats.totalUnreconciled}瓶`} />
-          <StatCard
-            title="未核销金额"
-            value={formatCurrency(stats.totalUnreconciledAmount)}
-          />
-          <StatCard title="账期客户" value={String(stats.creditCustomerCount)} />
-          <StatCard
-            title="坏账订单"
-            value={String(stats.badDebtOrderCount)}
-            sub={`金额 ${formatCurrency(stats.badDebtAmount)}`}
-          />
-          <StatCard
-            title="坏账货物"
-            value={`收回 ${stats.badDebtRecoveredQty}瓶 / 未收回 ${stats.badDebtUnrecoveredQty}瓶`}
-          />
-        </div>
+        <>
+          <div className="stat-tile-grid cols-5 gap-3">
+            <StatCard title="未核销数量" value={`${stats.totalUnreconciled}瓶`} />
+            <StatCard
+              title="未核销金额"
+              value={formatCurrency(stats.totalUnreconciledAmount)}
+            />
+            <StatCard title="账期客户" value={String(stats.creditCustomerCount)} />
+            <StatCard
+              title="坏账订单"
+              value={String(stats.badDebtOrderCount)}
+              sub={`金额 ${formatCurrency(stats.badDebtAmount)}`}
+            />
+            <StatCard
+              title="坏账货物"
+              value={`收回 ${stats.badDebtRecoveredQty}瓶 / 未收回 ${stats.badDebtUnrecoveredQty}瓶`}
+            />
+          </div>
+
+          {agingStats && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="font-serif text-base flex items-center gap-2">
+                  <Wallet className="h-4 w-4" />
+                  应收账龄看板
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex flex-wrap gap-2">
+                  {AGING_TABS.map((tab) => (
+                    <Button
+                      key={tab.key}
+                      variant={agingBucket === tab.key ? "primary" : "secondary"}
+                      size="sm"
+                      onClick={() => switchAging(tab.key)}
+                    >
+                      {tab.label}
+                      <span className="ml-1.5 text-xs opacity-80">
+                        {formatCurrency(agingStats[tab.key].amount)}
+                      </span>
+                    </Button>
+                  ))}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="rounded-lg border border-border bg-paper/40 p-3">
+                    <div className="text-xs text-muted">应收金额</div>
+                    <div className="text-lg font-semibold text-wine mt-1">
+                      {formatCurrency(agingStats[appliedAging].amount)}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-border bg-paper/40 p-3">
+                    <div className="text-xs text-muted">订单笔数</div>
+                    <div className="text-lg font-semibold mt-1">
+                      {agingStats[appliedAging].orderCount}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-border bg-paper/40 p-3">
+                    <div className="text-xs text-muted">涉及客户</div>
+                    <div className="text-lg font-semibold mt-1">
+                      {agingStats[appliedAging].customerCount}
+                    </div>
+                  </div>
+                </div>
+                <p className="text-xs text-muted">
+                  按订单下单日计算账龄；下方客户列表已按所选账龄段筛选。
+                </p>
+              </CardContent>
+            </Card>
+          )}
+        </>
       )}
 
       <Card>

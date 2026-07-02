@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireSession, PRODUCT_MANAGER_ROLES, canManageProducts } from "@/lib/auth";
 import { apiError, handleApiError } from "@/lib/api";
+import { calcSpecMaxSellableBatch } from "@/lib/inventory";
 import {
   serializeProductForAdmin,
   serializeProductForSales,
@@ -30,16 +31,49 @@ export async function GET(request: NextRequest) {
     const session = await requireSession();
     const products = await prisma.product.findMany({
       include: {
-        specs: { orderBy: { createdAt: "asc" } },
+        specs: {
+          orderBy: { createdAt: "asc" },
+          include: {
+            stockBasisLines: { select: { id: true }, take: 1 },
+          },
+        },
         images: { orderBy: { sortOrder: "asc" } },
       },
       orderBy: { createdAt: "desc" },
     });
     const forAdmin = canManageProducts(session.role);
+
+    let sellableMap = new Map<string, number>();
+    if (forAdmin) {
+      const configuredSpecIds = products.flatMap((p) =>
+        p.specs.filter((s) => s.stockBasisLines.length > 0).map((s) => s.id)
+      );
+      if (configuredSpecIds.length > 0) {
+        sellableMap = await calcSpecMaxSellableBatch(configuredSpecIds);
+      }
+    }
+
     return NextResponse.json(
-      products.map((p) =>
-        forAdmin ? serializeProductForAdmin(p) : serializeProductForSales(p)
-      )
+      products.map((p) => {
+        const base = forAdmin
+          ? serializeProductForAdmin(p)
+          : serializeProductForSales(p);
+        if (!forAdmin) return base;
+        return {
+          ...base,
+          specs: base.specs.map((s) => {
+            const raw = p.specs.find((rs) => rs.id === s.id);
+            const stockConfigured = (raw?.stockBasisLines.length ?? 0) > 0;
+            return {
+              ...s,
+              stockConfigured,
+              maxSellable: stockConfigured
+                ? (sellableMap.get(s.id) ?? 0)
+                : null,
+            };
+          }),
+        };
+      })
     );
   } catch (error) {
     return handleApiError(error);

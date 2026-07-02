@@ -11,6 +11,8 @@ import {
   Cake,
   StickyNote,
 } from "lucide-react";
+import { AppNavLink } from "@/components/navigation/app-nav-link";
+import { useAppNavigation } from "@/hooks/use-app-navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -72,6 +74,7 @@ export function Customer360Page({
   user: SessionUser;
 }) {
   const router = useRouter();
+  const { navigate, goBack } = useAppNavigation();
   const { isPremiumActive } = useEdition();
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -131,7 +134,7 @@ export function Customer360Page({
   return (
     <div className="space-y-5">
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="sm" onClick={() => router.back()}>
+        <Button variant="ghost" size="sm" onClick={() => goBack("/customers")}>
           <ArrowLeft className="h-4 w-4 mr-1" />
           返回
         </Button>
@@ -223,21 +226,24 @@ export function Customer360Page({
           <>
             {isPremiumActive ? (
               <>
-                <Link
-                  href={`/orders/new?customerId=${profile.id}&returnTo=/customers/${profile.id}`}
+                <Button
+                  size="sm"
+                  onClick={() =>
+                    navigate(`/orders/new?customerId=${profile.id}`)
+                  }
                 >
-                  <Button size="sm">
-                    <Plus className="h-3.5 w-3.5 mr-1" />
-                    新建订单
-                  </Button>
-                </Link>
-                <Link
-                  href={`/follow-up/write?customerId=${profile.id}&returnTo=/customers/${profile.id}`}
+                  <Plus className="h-3.5 w-3.5 mr-1" />
+                  新建订单
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() =>
+                    navigate(`/follow-up/write?customerId=${profile.id}`)
+                  }
                 >
-                  <Button variant="secondary" size="sm">
-                    写跟进
-                  </Button>
-                </Link>
+                  写跟进
+                </Button>
               </>
             ) : (
               <>
@@ -295,9 +301,12 @@ export function Customer360Page({
                   <div className="font-medium text-sm mt-0.5">{item.title}</div>
                   <p className="text-sm text-muted mt-0.5">{item.summary}</p>
                   {item.href && (
-                    <Link href={item.href} className="text-xs text-wine hover:underline mt-1 inline-block">
+                    <AppNavLink
+                      href={item.href}
+                      className="text-xs text-wine hover:underline mt-1 inline-block"
+                    >
                       查看订单
-                    </Link>
+                    </AppNavLink>
                   )}
                 </li>
               ))}

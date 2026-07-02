@@ -1,6 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
 import { randomBytes } from "crypto";
+import { compressImageBuffer } from "@/lib/image-compress";
 
 export const PRODUCT_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
 
@@ -30,13 +31,14 @@ export async function saveProductImageFile(productId: string, file: File) {
   const dir = path.join(getProductUploadsRoot(), productId);
   await fs.mkdir(dir, { recursive: true });
 
-  const safeName = sanitizeFileName(file.name);
+  const raw = Buffer.from(await file.arrayBuffer());
+  const compressed = await compressImageBuffer(raw, file.type, file.name);
+  const safeName = sanitizeFileName(compressed.fileName);
   const storageKey = `${productId}/${randomBytes(8).toString("hex")}-${safeName}`;
   const absPath = path.join(getProductUploadsRoot(), storageKey);
-  const buffer = Buffer.from(await file.arrayBuffer());
-  await fs.writeFile(absPath, buffer);
+  await fs.writeFile(absPath, compressed.buffer);
 
-  return { storageKey, mimeType: file.type };
+  return { storageKey, mimeType: compressed.mimeType };
 }
 
 export function resolveProductMediaPath(storageKey: string) {
@@ -84,13 +86,14 @@ export async function saveSpecThumbnailFile(
   const dir = path.join(getProductUploadsRoot(), productId, "specs", specId);
   await fs.mkdir(dir, { recursive: true });
 
-  const safeName = sanitizeFileName(file.name);
+  const raw = Buffer.from(await file.arrayBuffer());
+  const compressed = await compressImageBuffer(raw, file.type, file.name);
+  const safeName = sanitizeFileName(compressed.fileName);
   const storageKey = `${productId}/specs/${specId}/${randomBytes(8).toString("hex")}-${safeName}`;
   const absPath = path.join(getProductUploadsRoot(), storageKey);
-  const buffer = Buffer.from(await file.arrayBuffer());
-  await fs.writeFile(absPath, buffer);
+  await fs.writeFile(absPath, compressed.buffer);
 
-  return { storageKey, mimeType: file.type };
+  return { storageKey, mimeType: compressed.mimeType };
 }
 
 export function specMediaUrl(productId: string, storageKey: string) {

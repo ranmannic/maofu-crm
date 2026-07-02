@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth";
 import { handleApiError } from "@/lib/api";
-import { getCreditStats, syncEligibleCreditOrders } from "@/lib/credit";
+import { getCreditStats, syncEligibleCreditOrders, getCreditAgingStats, matchesCreditAgingBucket, type CreditAgingBucket } from "@/lib/credit";
 import {
   syncPerformanceData,
   resolveReconciliationPerformanceAmount,
@@ -36,6 +36,16 @@ export async function GET(request: NextRequest) {
         ? session.id
         : searchParams.get("salesId") || undefined;
 
+    const agingBucket = (searchParams.get("aging") || "all") as CreditAgingBucket;
+    const validAging = new Set<CreditAgingBucket>([
+      "all",
+      "d30",
+      "d60",
+      "d90",
+      "d90plus",
+    ]);
+    const appliedAging = validAging.has(agingBucket) ? agingBucket : "all";
+
     if (view === "active") {
       await syncEligibleCreditOrders(salesScope);
       try {
@@ -46,6 +56,8 @@ export async function GET(request: NextRequest) {
     }
 
     const stats = view === "active" ? await getCreditStats(salesScope) : null;
+    const agingStats =
+      view === "active" ? await getCreditAgingStats(salesScope) : null;
 
     const orderWhere: Prisma.OrderWhereInput = {
       deletedAt: null,
@@ -128,6 +140,9 @@ export async function GET(request: NextRequest) {
         if (order.paymentStatus === "PAID" && order.creditStatus !== "BAD_DEBT") {
           continue;
         }
+        const unreconciled = Math.max(0, order.totalAmount - order.paidAmount);
+        if (unreconciled <= 0) continue;
+        if (!matchesCreditAgingBucket(order.orderedAt, appliedAging)) continue;
       }
 
       const cid = order.customerId;
@@ -176,6 +191,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       view,
       stats,
+      agingStats,
+      agingBucket: appliedAging,
       settledOrderCount,
       customers,
       canEdit: ["OPERATIONS", "ADMIN"].includes(session.role),

@@ -1,7 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
+import { useCallback, useEffect, useState, useRef } from "react";
 import {
   Search,
   Phone,
@@ -11,6 +10,11 @@ import {
   RotateCcw,
   Bell,
 } from "lucide-react";
+import { AppNavLink } from "@/components/navigation/app-nav-link";
+import {
+  useListPageSnapshot,
+  useRestoreListPageScroll,
+} from "@/hooks/use-saved-list-page-state";
 import { FilterField } from "@/components/ui/filter-field";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -147,24 +151,58 @@ function rowHighlight(
   return "";
 }
 
+const FOLLOW_UP_ROUTE_KEY = "/follow-up";
+
+interface FollowUpPageState {
+  page: number;
+  segment: SegmentFilter;
+  appliedQ: string;
+  appliedSalesFilter: string;
+  appliedClosedOnly: boolean;
+  draftQ: string;
+  draftSalesFilter: string;
+  draftClosedOnly: boolean;
+  rows?: FollowUpRow[];
+  stats?: FollowUpStats | null;
+  total?: number;
+  totalPages?: number;
+  scrollY?: number;
+}
+
 export function FollowUpPage({ user }: { user: SessionUser }) {
   const isAdmin = user.role === "ADMIN";
-  const [rows, setRows] = useState<FollowUpRow[]>([]);
-  const [stats, setStats] = useState<FollowUpStats | null>(null);
-  const [salesUsers, setSalesUsers] = useState<SalesUser[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState("");
-  const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
+  const snapshot = useListPageSnapshot<FollowUpPageState>(FOLLOW_UP_ROUTE_KEY);
+  const saved = snapshot?.data;
+  const restoreOnMount = useRef(saved?.rows !== undefined);
 
-  const [segment, setSegment] = useState<SegmentFilter>("");
-  const [draftQ, setDraftQ] = useState("");
-  const [draftSalesFilter, setDraftSalesFilter] = useState("");
-  const [draftClosedOnly, setDraftClosedOnly] = useState(isAdmin);
-  const [appliedQ, setAppliedQ] = useState("");
-  const [appliedSalesFilter, setAppliedSalesFilter] = useState("");
-  const [appliedClosedOnly, setAppliedClosedOnly] = useState(isAdmin);
+  const [rows, setRows] = useState<FollowUpRow[]>(() => saved?.rows ?? []);
+  const [stats, setStats] = useState<FollowUpStats | null>(
+    () => saved?.stats ?? null
+  );
+  const [salesUsers, setSalesUsers] = useState<SalesUser[]>([]);
+  const [loading, setLoading] = useState(() => saved?.rows === undefined);
+  const [loadError, setLoadError] = useState("");
+  const [page, setPage] = useState(() => saved?.page ?? 1);
+  const [total, setTotal] = useState(() => saved?.total ?? 0);
+  const [totalPages, setTotalPages] = useState(() => saved?.totalPages ?? 1);
+
+  const [segment, setSegment] = useState<SegmentFilter>(
+    () => saved?.segment ?? ""
+  );
+  const [draftQ, setDraftQ] = useState(() => saved?.draftQ ?? "");
+  const [draftSalesFilter, setDraftSalesFilter] = useState(
+    () => saved?.draftSalesFilter ?? ""
+  );
+  const [draftClosedOnly, setDraftClosedOnly] = useState(
+    () => saved?.draftClosedOnly ?? isAdmin
+  );
+  const [appliedQ, setAppliedQ] = useState(() => saved?.appliedQ ?? "");
+  const [appliedSalesFilter, setAppliedSalesFilter] = useState(
+    () => saved?.appliedSalesFilter ?? ""
+  );
+  const [appliedClosedOnly, setAppliedClosedOnly] = useState(
+    () => saved?.appliedClosedOnly ?? isAdmin
+  );
 
   const [followOpen, setFollowOpen] = useState(false);
   const [followTarget, setFollowTarget] = useState<FollowUpRow | null>(null);
@@ -195,8 +233,16 @@ export function FollowUpPage({ user }: { user: SessionUser }) {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
+  useRestoreListPageScroll(
+    FOLLOW_UP_ROUTE_KEY,
+    snapshot?.scrollY,
+    !loading
+  );
+
   const load = useCallback(async () => {
-    setLoading(true);
+    const silent = restoreOnMount.current;
+    if (restoreOnMount.current) restoreOnMount.current = false;
+    if (!silent) setLoading(true);
     setLoadError("");
     const params = new URLSearchParams({
       page: String(page),
@@ -582,7 +628,7 @@ export function FollowUpPage({ user }: { user: SessionUser }) {
                       >
                         <td className="py-3">
                           <div className="font-medium flex items-center gap-2 flex-wrap">
-                            <Link
+                            <AppNavLink
                               href={`/customers/${row.id}`}
                               className={cn(
                                 "hover:underline",
@@ -591,9 +637,24 @@ export function FollowUpPage({ user }: { user: SessionUser }) {
                                   ? "text-pink-700 font-semibold"
                                   : "text-wine"
                               )}
+                              pageStateKey={FOLLOW_UP_ROUTE_KEY}
+                              pageState={{
+                                page,
+                                segment,
+                                appliedQ,
+                                appliedSalesFilter,
+                                appliedClosedOnly,
+                                draftQ,
+                                draftSalesFilter,
+                                draftClosedOnly,
+                                rows,
+                                stats,
+                                total,
+                                totalPages,
+                              }}
                             >
                               {row.name}
-                            </Link>
+                            </AppNavLink>
                             {row.birthdayReminderStatus !== "NONE" &&
                               row.followUpStatus === "ACTIVE" && (
                                 <Badge

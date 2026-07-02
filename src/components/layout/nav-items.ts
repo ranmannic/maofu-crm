@@ -13,6 +13,7 @@ import {
   Warehouse,
   BadgePercent,
   Settings,
+  LayoutList,
   type LucideIcon,
 } from "lucide-react";
 
@@ -33,6 +34,13 @@ export const navItems: {
   { href: "/credit", label: "账期核销", icon: ClipboardList, roles: ["ADMIN", "SALES", "OPERATIONS"] },
   { href: "/products", label: "产品管理", icon: Package, roles: ["ADMIN", "OPERATIONS"] },
   { href: "/inventory", label: "库存管理", icon: Warehouse, roles: ["ADMIN", "OPERATIONS"], premiumOnly: true },
+  {
+    href: "/stock-overview",
+    label: "库存一览",
+    icon: LayoutList,
+    roles: ["SALES"],
+    premiumOnly: true,
+  },
   { href: "/commissions", label: "销售提成", icon: BadgePercent, roles: ["ADMIN"], premiumOnly: true },
   {
     href: "/catalog",
@@ -68,6 +76,7 @@ export function getNavTitle(pathname: string) {
   if (pathname === "/") return "数据概览";
   if (pathname.startsWith("/workbench")) return "职能工作台";
   if (pathname.startsWith("/inventory")) return "库存管理";
+  if (pathname.startsWith("/stock-overview")) return "库存一览";
   if (pathname.startsWith("/commissions")) return "销售提成";
   if (pathname.startsWith("/catalog")) return "产品展示";
   if (pathname.startsWith("/system")) return "系统管理";

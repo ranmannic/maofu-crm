@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Plus, Pencil, Trash2, Percent, Coins, X, Medal } from "lucide-react";
+import { Plus, Pencil, Trash2, Percent, Coins, X, Medal, Pin, ChevronDown, ChevronUp } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Select } from "@/components/ui/input";
@@ -9,7 +9,7 @@ import { Modal, ModalFooter } from "@/components/ui/modal";
 import { Badge } from "@/components/ui/badge";
 import { Pagination } from "@/components/ui/pagination";
 import { useEdition } from "@/components/edition/edition-provider";
-import { formatCommissionValue, currentMonthKey } from "@/lib/sales-commission";
+import { formatCommissionValue, currentMonthKey, RULES_COLLAPSED_COUNT } from "@/lib/sales-commission";
 
 interface ProductOption {
   id: string;
@@ -24,7 +24,8 @@ interface SalesOption {
 
 interface CommissionRule {
   id: string;
-  productId: string;
+  isGlobalDefault: boolean;
+  productId: string | null;
   productName: string;
   productSpecId: string | null;
   specName: string | null;
@@ -94,11 +95,27 @@ export function CommissionsPage() {
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [rulesExpanded, setRulesExpanded] = useState(false);
+  const [globalEditOpen, setGlobalEditOpen] = useState(false);
+  const [globalValue, setGlobalValue] = useState("3");
 
   const [statsMonth, setStatsMonth] = useState(currentMonthKey());
   const [statsPage, setStatsPage] = useState(1);
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
+
+  const globalRule = useMemo(
+    () => rules.find((r) => r.isGlobalDefault) ?? null,
+    [rules]
+  );
+  const otherRules = useMemo(
+    () => rules.filter((r) => !r.isGlobalDefault),
+    [rules]
+  );
+  const visibleOtherRules = rulesExpanded
+    ? otherRules
+    : otherRules.slice(0, RULES_COLLAPSED_COUNT);
+  const hasMoreRules = otherRules.length > RULES_COLLAPSED_COUNT;
 
   const selectedProduct = useMemo(
     () => products.find((p) => p.id === form.productId),
@@ -166,6 +183,10 @@ export function CommissionsPage() {
     setStatsPage(1);
   }, [statsMonth]);
 
+  useEffect(() => {
+    setRulesExpanded(false);
+  }, [filterProductId]);
+
   function openCreate() {
     setEditing(null);
     setForm({
@@ -176,10 +197,50 @@ export function CommissionsPage() {
     setModalOpen(true);
   }
 
+  function openEditGlobal(rule: CommissionRule) {
+    setGlobalValue(String(rule.value));
+    setError("");
+    setGlobalEditOpen(true);
+  }
+
+  async function handleSaveGlobal() {
+    if (!globalRule) return;
+    const value = parseFloat(globalValue);
+    if (Number.isNaN(value) || value < 0) {
+      setError("请输入有效的提成比例");
+      return;
+    }
+    if (value > 100) {
+      setError("百分比提成不能超过 100%");
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    const res = await fetch(`/api/commissions/${globalRule.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setError(data.error || "保存失败");
+      setSaving(false);
+      return;
+    }
+    setGlobalEditOpen(false);
+    setSaving(false);
+    await Promise.all([loadRules(), loadStats()]);
+  }
+
   function openEdit(rule: CommissionRule) {
+    if (rule.isGlobalDefault) {
+      openEditGlobal(rule);
+      return;
+    }
     setEditing(rule);
     setForm({
-      productId: rule.productId,
+      productId: rule.productId ?? "",
       productSpecId: rule.productSpecId ?? "",
       appliesToAllSales: rule.appliesToAllSales,
       salesIds: rule.salesIds,
@@ -247,12 +308,17 @@ export function CommissionsPage() {
       return;
     }
 
+    if (data.warning) {
+      alert(data.warning);
+    }
+
     setModalOpen(false);
     setSaving(false);
     await Promise.all([loadRules(), loadStats()]);
   }
 
   async function handleDelete(rule: CommissionRule) {
+    if (rule.isGlobalDefault) return;
     if (!confirm(`确定删除「${rule.productName}」的提成规则？`)) return;
     const res = await fetch(`/api/commissions/${rule.id}`, { method: "DELETE" });
     const data = await res.json();
@@ -261,6 +327,51 @@ export function CommissionsPage() {
       return;
     }
     await Promise.all([loadRules(), loadStats()]);
+  }
+
+  function renderRuleRow(rule: CommissionRule, pinned = false) {
+    return (
+      <tr
+        key={rule.id}
+        className={`border-b border-border/40 ${pinned ? "bg-paper/60" : ""}`}
+      >
+        <td className="py-3 pr-3 font-medium">
+          {pinned && <Pin className="h-3.5 w-3.5 inline mr-1 text-wine" />}
+          {rule.productName}
+        </td>
+        <td className="py-3 pr-3 text-muted">{rule.scopeLabel}</td>
+        <td className="py-3 pr-3">
+          <Badge variant={rule.kind === "PERCENT" ? "wine" : "default"}>
+            {rule.kind === "PERCENT" ? (
+              <Percent className="h-3 w-3 mr-1 inline" />
+            ) : (
+              <Coins className="h-3 w-3 mr-1 inline" />
+            )}
+            {formatCommissionValue(rule.kind, rule.value)}
+          </Badge>
+        </td>
+        <td className="py-3 whitespace-nowrap space-x-2">
+          <button
+            type="button"
+            onClick={() => openEdit(rule)}
+            className="text-wine hover:underline text-xs inline-flex items-center gap-0.5"
+          >
+            <Pencil className="h-3 w-3" />
+            {pinned ? "修改提成" : "编辑"}
+          </button>
+          {!pinned && (
+            <button
+              type="button"
+              onClick={() => handleDelete(rule)}
+              className="text-muted hover:text-red-700 text-xs inline-flex items-center gap-0.5"
+            >
+              <Trash2 className="h-3 w-3" />
+              删除
+            </button>
+          )}
+        </td>
+      </tr>
+    );
   }
 
   if (editionLoading) {
@@ -313,9 +424,9 @@ export function CommissionsPage() {
         <CardContent>
           {loading ? (
             <div className="text-center py-12 text-muted">加载中...</div>
-          ) : rules.length === 0 ? (
+          ) : !globalRule && otherRules.length === 0 ? (
             <div className="text-center py-12 text-muted text-sm">
-              暂无提成规则。可配置最简单规则：仅选产品 + 全部销售统一提成。
+              暂无提成规则
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -329,48 +440,32 @@ export function CommissionsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rules.map((rule) => (
-                    <tr key={rule.id} className="border-b border-border/40">
-                      <td className="py-3 pr-3 font-medium">
-                        {rule.productName}
-                      </td>
-                      <td className="py-3 pr-3 text-muted">
-                        {rule.scopeLabel}
-                      </td>
-                      <td className="py-3 pr-3">
-                        <Badge
-                          variant={rule.kind === "PERCENT" ? "wine" : "default"}
-                        >
-                          {rule.kind === "PERCENT" ? (
-                            <Percent className="h-3 w-3 mr-1 inline" />
-                          ) : (
-                            <Coins className="h-3 w-3 mr-1 inline" />
-                          )}
-                          {formatCommissionValue(rule.kind, rule.value)}
-                        </Badge>
-                      </td>
-                      <td className="py-3 whitespace-nowrap space-x-2">
-                        <button
-                          type="button"
-                          onClick={() => openEdit(rule)}
-                          className="text-wine hover:underline text-xs inline-flex items-center gap-0.5"
-                        >
-                          <Pencil className="h-3 w-3" />
-                          编辑
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDelete(rule)}
-                          className="text-muted hover:text-red-700 text-xs inline-flex items-center gap-0.5"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                          删除
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {globalRule && renderRuleRow(globalRule, true)}
+                  {visibleOtherRules.map((rule) => renderRuleRow(rule))}
                 </tbody>
               </table>
+              {hasMoreRules && (
+                <div className="pt-4 text-center">
+                  <button
+                    type="button"
+                    onClick={() => setRulesExpanded((v) => !v)}
+                    className="text-sm text-wine hover:underline inline-flex items-center gap-1"
+                  >
+                    {rulesExpanded ? (
+                      <>
+                        <ChevronUp className="h-4 w-4" />
+                        收起
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown className="h-4 w-4" />
+                        展开更多（共 {otherRules.length} 条，已显示{" "}
+                        {visibleOtherRules.length} 条）
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </CardContent>
@@ -463,6 +558,39 @@ export function CommissionsPage() {
           )}
         </CardContent>
       </Card>
+
+      <Modal
+        open={globalEditOpen}
+        onClose={() => setGlobalEditOpen(false)}
+        title="修改全局默认提成"
+        className="sm:max-w-md"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-muted">
+            所有产品 · 全部规格 · 全部销售。仅可修改提成比例，不可修改适用范围或删除。
+          </p>
+          <div>
+            <Label>提成比例 (%) *</Label>
+            <Input
+              type="number"
+              min={0}
+              max={100}
+              step={0.1}
+              value={globalValue}
+              onChange={(e) => setGlobalValue(e.target.value)}
+            />
+          </div>
+          {error && <p className="text-sm text-red-700">{error}</p>}
+        </div>
+        <ModalFooter>
+          <Button variant="secondary" onClick={() => setGlobalEditOpen(false)}>
+            取消
+          </Button>
+          <Button onClick={handleSaveGlobal} disabled={saving}>
+            {saving ? "保存中..." : "保存"}
+          </Button>
+        </ModalFooter>
+      </Modal>
 
       <Modal
         open={modalOpen}

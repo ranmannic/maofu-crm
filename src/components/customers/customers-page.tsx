@@ -1,8 +1,12 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
-import Link from "next/link";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { Plus, Pencil, Trash2, RotateCcw, ArrowRightLeft, Search, MapPin, Upload, Share2 } from "lucide-react";
+import { AppNavLink } from "@/components/navigation/app-nav-link";
+import {
+  useListPageSnapshot,
+  useRestoreListPageScroll,
+} from "@/hooks/use-saved-list-page-state";
 import { FilterField } from "@/components/ui/filter-field";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -40,23 +44,53 @@ interface SalesUser {
   name: string;
 }
 
+const CUSTOMERS_ROUTE_KEY = "/customers";
+
+interface CustomersPageState {
+  page: number;
+  appliedQ: string;
+  appliedSalesFilter: string;
+  appliedShowDeleted: boolean;
+  draftQ: string;
+  draftSalesFilter: string;
+  draftShowDeleted: boolean;
+  customers?: Customer[];
+  total?: number;
+  totalPages?: number;
+  scrollY?: number;
+}
+
 export function CustomersPage({ user }: { user: SessionUser }) {
   const isAdmin = user.role === "ADMIN";
-  const [customers, setCustomers] = useState<Customer[]>([]);
+  const snapshot = useListPageSnapshot<CustomersPageState>(CUSTOMERS_ROUTE_KEY);
+  const saved = snapshot?.data;
+  const restoreOnMount = useRef(saved?.customers !== undefined);
+
+  const [customers, setCustomers] = useState<Customer[]>(
+    () => saved?.customers ?? []
+  );
   const [channels, setChannels] = useState<Channel[]>([]);
   const [salesUsers, setSalesUsers] = useState<SalesUser[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
+  const [loading, setLoading] = useState(() => saved?.customers === undefined);
+  const [page, setPage] = useState(() => saved?.page ?? 1);
+  const [total, setTotal] = useState(() => saved?.total ?? 0);
+  const [totalPages, setTotalPages] = useState(() => saved?.totalPages ?? 1);
 
-  const [appliedQ, setAppliedQ] = useState("");
-  const [appliedSalesFilter, setAppliedSalesFilter] = useState("");
-  const [appliedShowDeleted, setAppliedShowDeleted] = useState(false);
+  const [appliedQ, setAppliedQ] = useState(() => saved?.appliedQ ?? "");
+  const [appliedSalesFilter, setAppliedSalesFilter] = useState(
+    () => saved?.appliedSalesFilter ?? ""
+  );
+  const [appliedShowDeleted, setAppliedShowDeleted] = useState(
+    () => saved?.appliedShowDeleted ?? false
+  );
 
-  const [draftQ, setDraftQ] = useState("");
-  const [draftSalesFilter, setDraftSalesFilter] = useState("");
-  const [draftShowDeleted, setDraftShowDeleted] = useState(false);
+  const [draftQ, setDraftQ] = useState(() => saved?.draftQ ?? "");
+  const [draftSalesFilter, setDraftSalesFilter] = useState(
+    () => saved?.draftSalesFilter ?? ""
+  );
+  const [draftShowDeleted, setDraftShowDeleted] = useState(
+    () => saved?.draftShowDeleted ?? false
+  );
 
   const [modalOpen, setModalOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
@@ -74,8 +108,16 @@ export function CustomersPage({ user }: { user: SessionUser }) {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
+  useRestoreListPageScroll(
+    CUSTOMERS_ROUTE_KEY,
+    snapshot?.scrollY,
+    !loading
+  );
+
   const load = useCallback(async () => {
-    setLoading(true);
+    const silent = restoreOnMount.current;
+    if (restoreOnMount.current) restoreOnMount.current = false;
+    if (!silent) setLoading(true);
     const params = new URLSearchParams({
       page: String(page),
       pageSize: String(DEFAULT_PAGE_SIZE),
@@ -302,12 +344,25 @@ export function CustomersPage({ user }: { user: SessionUser }) {
                       >
                         <td className="py-3 font-mono text-xs">{c.id.slice(0, 8)}…</td>
                         <td className="py-3 font-medium">
-                          <Link
+                          <AppNavLink
                             href={`/customers/${c.id}`}
                             className="text-wine hover:underline"
+                            pageStateKey={CUSTOMERS_ROUTE_KEY}
+                            pageState={{
+                              page,
+                              appliedQ,
+                              appliedSalesFilter,
+                              appliedShowDeleted,
+                              draftQ,
+                              draftSalesFilter,
+                              draftShowDeleted,
+                              customers,
+                              total,
+                              totalPages,
+                            }}
                           >
                             {c.name}
-                          </Link>
+                          </AppNavLink>
                           {c.isDeleted && (
                             <Badge variant="warning" className="ml-2">已删除</Badge>
                           )}

@@ -17,6 +17,11 @@ import { calcReconcilePaidAmount, calcCreateReconcilePaidAmount, allProductsFull
 import { validateNonGiftDuplicateItems } from "@/lib/order-items";
 import { OrderVouchersPanel } from "@/components/orders/order-vouchers-panel";
 import { useShareLink } from "@/hooks/use-share-link";
+import { useAppNavigation } from "@/hooks/use-app-navigation";
+import {
+  useListPageSnapshot,
+  useRestoreListPageScroll,
+} from "@/hooks/use-saved-list-page-state";
 import type { SessionUser } from "@/lib/auth-types";
 import type { SpecUnit } from "@/generated/prisma/client";
 
@@ -126,6 +131,34 @@ function getPaymentBadge(order: Order) {
   return { variant: "warning" as const, label: "未收" };
 }
 
+const ORDERS_ROUTE_KEY = "/orders";
+
+interface OrdersPageState {
+  page: number;
+  appliedFilters: typeof emptyOrderFilters;
+  appliedShowDeleted: boolean;
+  filterDraft: typeof emptyOrderFilters;
+  draftShowDeleted: boolean;
+  orders?: Order[];
+  total?: number;
+  totalPages?: number;
+  scrollY?: number;
+}
+
+const emptyOrderFilters = {
+  customer: "",
+  sales: "",
+  orderNo: "",
+  orderedStart: "",
+  orderedEnd: "",
+  paidStart: "",
+  paidEnd: "",
+  isPaid: "",
+  paymentStatus: "",
+  isShipped: "",
+  showDeleted: "",
+};
+
 export function OrdersPage({
   user,
   variant = "default",
@@ -138,8 +171,12 @@ export function OrdersPage({
   returnTo?: string;
 }) {
   const router = useRouter();
+  const { goBack } = useAppNavigation();
   const { shareOrder, shareModal } = useShareLink();
   const isCreateOnly = variant === "create";
+  const createBackTarget = returnTo || "/orders";
+  const createSuccessTarget =
+    returnTo || `/customers/${initialCustomerId || ""}`;
   const createInitialized = useRef(false);
   const canCreate = ["SALES", "ADMIN"].includes(user.role);
   const canDelete = ["SALES", "ADMIN"].includes(user.role);
@@ -147,30 +184,38 @@ export function OrdersPage({
   const isAdmin = user.role === "ADMIN";
   const canExportOrders = isAdmin || canManageOps;
 
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
+  const snapshot = useListPageSnapshot<OrdersPageState>(
+    isCreateOnly ? "__skip__" : ORDERS_ROUTE_KEY
+  );
+  const saved = isCreateOnly ? undefined : snapshot?.data;
+  const restoreOnMount = useRef(!isCreateOnly && saved?.orders !== undefined);
 
-  const emptyOrderFilters = {
-    customer: "",
-    sales: "",
-    orderNo: "",
-    orderedStart: "",
-    orderedEnd: "",
-    paidStart: "",
-    paidEnd: "",
-    isPaid: "",
-    paymentStatus: "",
-    isShipped: "",
-    showDeleted: "",
-  };
+  const [orders, setOrders] = useState<Order[]>(() => saved?.orders ?? []);
+  const [loading, setLoading] = useState(
+    () => !isCreateOnly && saved?.orders === undefined
+  );
+  const [page, setPage] = useState(() => saved?.page ?? 1);
+  const [total, setTotal] = useState(() => saved?.total ?? 0);
+  const [totalPages, setTotalPages] = useState(() => saved?.totalPages ?? 1);
 
-  const [appliedFilters, setAppliedFilters] = useState(emptyOrderFilters);
-  const [filterDraft, setFilterDraft] = useState({ ...emptyOrderFilters });
-  const [draftShowDeleted, setDraftShowDeleted] = useState(false);
-  const [appliedShowDeleted, setAppliedShowDeleted] = useState(false);
+  const [appliedFilters, setAppliedFilters] = useState(
+    () => saved?.appliedFilters ?? emptyOrderFilters
+  );
+  const [filterDraft, setFilterDraft] = useState(
+    () => saved?.filterDraft ?? { ...emptyOrderFilters }
+  );
+  const [draftShowDeleted, setDraftShowDeleted] = useState(
+    () => saved?.draftShowDeleted ?? false
+  );
+  const [appliedShowDeleted, setAppliedShowDeleted] = useState(
+    () => saved?.appliedShowDeleted ?? false
+  );
+
+  useRestoreListPageScroll(
+    ORDERS_ROUTE_KEY,
+    isCreateOnly ? undefined : snapshot?.scrollY,
+    !isCreateOnly && !loading
+  );
 
   const isSales = user.role === "SALES";
 
@@ -240,7 +285,9 @@ export function OrdersPage({
   const [exporting, setExporting] = useState(false);
 
   const loadOrders = useCallback(async () => {
-    setLoading(true);
+    const silent = restoreOnMount.current;
+    if (restoreOnMount.current) restoreOnMount.current = false;
+    if (!silent) setLoading(true);
     const params = new URLSearchParams({
       page: String(page),
       pageSize: String(DEFAULT_PAGE_SIZE),
@@ -781,7 +828,7 @@ export function OrdersPage({
     }
     setCreateOpen(false);
     if (isCreateOnly) {
-      router.push(returnTo || `/customers/${createForm.customerId}`);
+      goBack(createSuccessTarget || "/orders");
       setSaving(false);
       return;
     }
@@ -985,7 +1032,7 @@ export function OrdersPage({
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => router.push(returnTo || "/orders")}
+            onClick={() => goBack(createBackTarget)}
           >
             <ArrowLeft className="h-4 w-4 mr-1" />
             返回
@@ -1269,7 +1316,7 @@ export function OrdersPage({
         open={isCreateOnly ? true : createOpen}
         onClose={() => {
           if (isCreateOnly) {
-            router.push(returnTo || "/orders");
+            goBack(createBackTarget);
             return;
           }
           setCreateOpen(false);
@@ -1617,7 +1664,7 @@ export function OrdersPage({
             variant="secondary"
             onClick={() => {
               if (isCreateOnly) {
-                router.push(returnTo || "/orders");
+                goBack(createBackTarget);
                 return;
               }
               setCreateOpen(false);

@@ -1,5 +1,12 @@
 import { prisma } from "@/lib/prisma";
-import { buildScopeLabel, ruleDimensionKey } from "@/lib/sales-commission";
+import {
+  buildScopeLabel,
+  DEFAULT_GLOBAL_COMMISSION_PERCENT,
+  GLOBAL_COMMISSION_RULE_ID,
+  ruleDimensionKey,
+  ruleSpecificityLevel,
+  scopesOverlap,
+} from "@/lib/sales-commission";
 
 export const includeRule = {
   product: { select: { name: true } },
@@ -9,23 +16,24 @@ export const includeRule = {
   },
 } as const;
 
-export type RuleWithRelations = Awaited<
-  ReturnType<typeof prisma.salesCommissionRule.findFirst>
+export type RuleWithRelations = NonNullable<
+  Awaited<ReturnType<typeof prisma.salesCommissionRule.findFirst>>
 > & {
-  product: { name: string };
+  product: { name: string } | null;
   productSpec: { name: string } | null;
   salesTargets: { salesId: string; sales: { id: string; name: string } }[];
 };
 
-export function serializeRule(rule: NonNullable<RuleWithRelations>) {
+export function serializeRule(rule: RuleWithRelations) {
   const specName = rule.productSpec?.name ?? null;
   const salesNames = rule.salesTargets.map((t) => t.sales.name);
   const salesIds = rule.salesTargets.map((t) => t.salesId);
 
   return {
     id: rule.id,
+    isGlobalDefault: rule.isGlobalDefault,
     productId: rule.productId,
-    productName: rule.product.name,
+    productName: rule.isGlobalDefault ? "所有产品" : (rule.product?.name ?? "—"),
     productSpecId: rule.productSpecId,
     specName,
     appliesToAllSales: rule.appliesToAllSales,
@@ -43,7 +51,7 @@ export function serializeRule(rule: NonNullable<RuleWithRelations>) {
 }
 
 export interface NormalizedRuleInput {
-  productId: string;
+  productId: string | null;
   productSpecId: string | null;
   appliesToAllSales: boolean;
   salesIds: string[];
@@ -52,7 +60,7 @@ export interface NormalizedRuleInput {
 }
 
 export function normalizeRuleInput(body: {
-  productId: string;
+  productId?: string | null;
   productSpecId?: string | null;
   appliesToAllSales: boolean;
   salesIds?: string[];
@@ -64,7 +72,7 @@ export function normalizeRuleInput(body: {
     : [...new Set(body.salesIds ?? [])];
 
   return {
-    productId: body.productId,
+    productId: body.productId || null,
     productSpecId: body.productSpecId || null,
     appliesToAllSales: body.appliesToAllSales,
     salesIds,
@@ -73,9 +81,39 @@ export function normalizeRuleInput(body: {
   };
 }
 
+/** 确保全局默认规则存在（所有产品 · 全部规格 · 全部销售 · 3%） */
+export async function ensureGlobalDefaultRule() {
+  const existing = await prisma.salesCommissionRule.findFirst({
+    where: { isGlobalDefault: true },
+  });
+  if (existing) return existing;
+
+  return prisma.salesCommissionRule.create({
+    data: {
+      id: GLOBAL_COMMISSION_RULE_ID,
+      isGlobalDefault: true,
+      productId: null,
+      productSpecId: null,
+      appliesToAllSales: true,
+      kind: "PERCENT",
+      value: DEFAULT_GLOBAL_COMMISSION_PERCENT,
+    },
+  });
+}
+
 export async function validateRuleInput(
-  data: NormalizedRuleInput
+  data: NormalizedRuleInput,
+  options?: { isGlobalDefault?: boolean }
 ): Promise<string | null> {
+  if (options?.isGlobalDefault) {
+    if (data.kind === "PERCENT" && data.value > 100) {
+      return "百分比提成不能超过 100%";
+    }
+    return null;
+  }
+
+  if (!data.productId) return "请选择产品";
+
   const product = await prisma.product.findUnique({
     where: { id: data.productId },
     select: { id: true },
@@ -104,37 +142,83 @@ export async function validateRuleInput(
   return null;
 }
 
-export async function hasDuplicateRule(
+export interface RuleConflictResult {
+  error?: string;
+  warning?: string;
+}
+
+export async function validateRuleConflict(
   data: NormalizedRuleInput,
   excludeId?: string
-): Promise<boolean> {
+): Promise<RuleConflictResult> {
   const existing = await prisma.salesCommissionRule.findMany({
-    where: {
-      productId: data.productId,
-      ...(excludeId ? { NOT: { id: excludeId } } : {}),
-    },
+    where: excludeId ? { NOT: { id: excludeId } } : undefined,
     include: { salesTargets: { select: { salesId: true } } },
   });
 
-  const key = ruleDimensionKey({
+  const incoming = {
     productId: data.productId,
     productSpecId: data.productSpecId,
     appliesToAllSales: data.appliesToAllSales,
     salesIds: data.salesIds,
     kind: data.kind,
     value: data.value,
-  });
+  };
 
-  return existing.some((r) =>
-    ruleDimensionKey({
-      productId: r.productId,
-      productSpecId: r.productSpecId,
-      appliesToAllSales: r.appliesToAllSales,
-      salesIds: r.salesTargets.map((t) => t.salesId),
-      kind: r.kind,
-      value: r.value,
-    }) === key
-  );
+  const warnings: string[] = [];
+
+  for (const rule of existing) {
+    if (rule.isGlobalDefault) continue;
+
+    const existingScope = {
+      productId: rule.productId,
+      productSpecId: rule.productSpecId,
+      appliesToAllSales: rule.appliesToAllSales,
+      salesIds: rule.salesTargets.map((t) => t.salesId),
+      kind: rule.kind,
+      value: rule.value,
+    };
+
+    const incomingFull = {
+      productId: incoming.productId,
+      productSpecId: incoming.productSpecId,
+      appliesToAllSales: incoming.appliesToAllSales,
+      salesIds: incoming.salesIds,
+      kind: incoming.kind,
+      value: incoming.value,
+    };
+
+    if (ruleDimensionKey(incomingFull) === ruleDimensionKey(existingScope)) {
+      return { error: "已存在相同维度的提成规则，请勿重复创建" };
+    }
+
+    if (!scopesOverlap(incomingFull, existingScope)) {
+      continue;
+    }
+
+    const incomingSpec = ruleSpecificityLevel(incomingFull);
+    const existingSpec = ruleSpecificityLevel(existingScope);
+
+    if (incomingSpec !== existingSpec) {
+      warnings.push(
+        "与已有规则范围重叠（规格/销售粒度不同）：匹配时更细规则优先，可继续保存"
+      );
+      continue;
+    }
+
+    const sameTerms =
+      rule.kind === incoming.kind && rule.value === incoming.value;
+    if (sameTerms) {
+      return { error: "适用范围与已有规则重叠，且提成方式相同，属于重复规则" };
+    }
+
+    return {
+      error: "适用范围与已有规则重叠且提成设置不同，请调整范围或统一提成后再保存",
+    };
+  }
+
+  const warning = [...new Set(warnings)].join("；") || undefined;
+  return warning ? { warning } : {};
 }
 
 export function ruleCreateData(data: NormalizedRuleInput) {
@@ -179,4 +263,26 @@ export async function updateRuleWithTargets(
     where: { id },
     include: includeRule,
   });
+}
+
+export async function updateGlobalDefaultValue(id: string, value: number) {
+  return prisma.salesCommissionRule.update({
+    where: { id },
+    data: { value },
+    include: includeRule,
+  });
+}
+
+export function sortSerializedRules<
+  T extends { isGlobalDefault: boolean; productName: string; scopeLabel: string }
+>(rules: T[]): T[] {
+  const global = rules.filter((r) => r.isGlobalDefault);
+  const others = rules
+    .filter((r) => !r.isGlobalDefault)
+    .sort((a, b) => {
+      const byProduct = a.productName.localeCompare(b.productName, "zh-CN");
+      if (byProduct !== 0) return byProduct;
+      return a.scopeLabel.localeCompare(b.scopeLabel, "zh-CN");
+    });
+  return [...global, ...others];
 }

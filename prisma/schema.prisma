@@ -90,6 +90,31 @@ enum CommissionKind {
   FIXED
 }
 
+enum StockMovementReason {
+  PURCHASE_IN
+  SHIP_OUT
+  SHIP_CANCEL_IN
+  ORDER_DELETE_IN
+  BAD_DEBT_RECOVER_IN
+  MANUAL_WRITE_OFF
+  MANUAL_ADJUST
+}
+
+enum StockPoolType {
+  WINE
+  MATERIAL
+}
+
+enum WineSkuType {
+  BOTTLE
+  LITER
+}
+
+enum StockBasisLineType {
+  WINE
+  MATERIAL
+}
+
 model AppSetting {
   id                    String     @id @default("global")
   edition               AppEdition @default(STANDARD)
@@ -228,6 +253,35 @@ model Product {
   specs  ProductSpec[]
   images ProductImage[]
   commissionRules SalesCommissionRule[]
+  wineStocks WineStock[]
+}
+
+model WineStock {
+  id                String      @id @default(cuid())
+  productId         String
+  product           Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  skuType           WineSkuType
+  stockQty          Int         @default(0)
+  lowStockThreshold Int         @default(0)
+  notes             String?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  @@unique([productId, skuType])
+  @@index([productId])
+}
+
+model Material {
+  id                String   @id @default(cuid())
+  name              String
+  unit              String   @default("个")
+  stockQty          Int      @default(0)
+  lowStockThreshold Int      @default(10)
+  notes             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  stockBasisLines ProductSpecStockBasisLine[]
 }
 
 model ProductImage {
@@ -258,18 +312,34 @@ model ProductSpec {
   wholesaleFloorPrice Float?
   description       String?
   thumbnailKey      String?
-  stockQty          Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   orderItems OrderItem[]
   commissionRules SalesCommissionRule[]
+  stockBasisLines ProductSpecStockBasisLine[]
+}
+
+model ProductSpecStockBasisLine {
+  id            String             @id @default(cuid())
+  productSpecId String
+  productSpec   ProductSpec        @relation(fields: [productSpecId], references: [id], onDelete: Cascade)
+  lineType      StockBasisLineType
+  materialId    String?
+  material      Material?          @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  wineProductId String?
+  wineSkuType   WineSkuType?
+  quantity      Int
+  sortOrder     Int                @default(0)
+
+  @@index([productSpecId, sortOrder])
 }
 
 model SalesCommissionRule {
   id                String         @id @default(cuid())
-  productId         String
-  product           Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  isGlobalDefault   Boolean        @default(false)
+  productId         String?
+  product           Product?       @relation(fields: [productId], references: [id], onDelete: Cascade)
   productSpecId     String?
   productSpec       ProductSpec?   @relation(fields: [productSpecId], references: [id], onDelete: Cascade)
   appliesToAllSales Boolean        @default(true)
@@ -282,6 +352,7 @@ model SalesCommissionRule {
 
   @@index([productId])
   @@index([productSpecId])
+  @@index([isGlobalDefault])
 }
 
 model SalesCommissionRuleSales {
@@ -327,6 +398,7 @@ model Order {
   refundStatus       RefundStatus  @default(NONE)
   refundAmount       Float         @default(0)
   refundedAt         DateTime?
+  stockDeducted      Boolean       @default(false)
   shareToken         String?       @unique
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
@@ -474,5 +546,27 @@ model PerformanceRecord {
   createdAt              DateTime                @default(now())
 
   @@index([salesId, eventAt, type])
+  @@index([orderId])
+}
+
+model StockMovement {
+  id            String              @id @default(cuid())
+  poolType      StockPoolType
+  productId     String?
+  materialId    String?
+  wineSkuType   WineSkuType?
+  productSpecId String?
+  delta         Int
+  stockAfter    Int
+  reason        StockMovementReason
+  notes         String?
+  orderId       String?
+  orderItemId   String?
+  userId        String?
+  userName      String?
+  createdAt     DateTime            @default(now())
+
+  @@index([productId, createdAt])
+  @@index([materialId, createdAt])
   @@index([orderId])
 }

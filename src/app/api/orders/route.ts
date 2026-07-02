@@ -14,6 +14,7 @@ import { parsePagination, paginatedResponse } from "@/lib/pagination";
 import { enrichOrderForList } from "@/lib/serializers";
 import { logOrderChange } from "@/lib/order-audit";
 import { processPaymentWithReconciliation, requiresPaymentReconciliation, ensureCreditOrderActive } from "@/lib/credit";
+import { deductOrderStock } from "@/lib/inventory";
 import { formatShippingAddress } from "@/lib/address-parse";
 import { validateNonGiftDuplicateItems } from "@/lib/order-items";
 import {
@@ -232,6 +233,20 @@ export async function POST(request: NextRequest) {
 
     if (isOnSiteStocking) {
       await ensureCreditOrderActive(order.id);
+      try {
+        await deductOrderStock(order.id, {
+          id: session.id,
+          name: session.name,
+        });
+      } catch (err) {
+        await prisma.order.update({
+          where: { id: order.id },
+          data: { deletedAt: new Date() },
+        });
+        return apiError(
+          err instanceof Error ? err.message : "现场备货扣减库存失败，订单已撤销"
+        );
+      }
     }
 
     if (
