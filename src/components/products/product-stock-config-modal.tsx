@@ -9,6 +9,7 @@ import {
   type BasisLineForm,
 } from "@/components/products/stock-basis-editor";
 import { SPEC_UNIT_LABELS } from "@/lib/constants";
+import { roundStockQty } from "@/lib/utils";
 import type { SpecUnit } from "@/generated/prisma/client";
 
 interface ProductSpec {
@@ -119,8 +120,15 @@ export function ProductStockConfigModal({
         setError("请选择物料");
         return;
       }
-      if (l.quantity < 1) {
-        setError("构成数量须至少为 1");
+      const isLiterWine =
+        l.lineType === "WINE" && l.wineSkuType === "LITER";
+      if (isLiterWine) {
+        if (l.quantity <= 0) {
+          setError("散酒构成数量须大于 0（如 0.75）");
+          return;
+        }
+      } else if (l.quantity < 1 || !Number.isInteger(l.quantity)) {
+        setError("构成数量须为大于等于 1 的整数");
         return;
       }
     }
@@ -132,15 +140,22 @@ export function ProductStockConfigModal({
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        lines: lines.map((l) => ({
-          lineType: l.lineType,
-          materialId:
-            l.lineType === "MATERIAL" ? l.materialId.trim() || null : null,
-          wineProductId:
-            l.lineType === "WINE" ? l.wineProductId.trim() || null : null,
-          wineSkuType: l.lineType === "WINE" ? l.wineSkuType : null,
-          quantity: Math.max(1, l.quantity),
-        })),
+        lines: lines.map((l) => {
+          const isLiterWine =
+            l.lineType === "WINE" && l.wineSkuType === "LITER";
+          const quantity = isLiterWine
+            ? roundStockQty(l.quantity)
+            : Math.max(1, Math.floor(l.quantity));
+          return {
+            lineType: l.lineType,
+            materialId:
+              l.lineType === "MATERIAL" ? l.materialId.trim() || null : null,
+            wineProductId:
+              l.lineType === "WINE" ? l.wineProductId.trim() || null : null,
+            wineSkuType: l.lineType === "WINE" ? l.wineSkuType : null,
+            quantity,
+          };
+        }),
       }),
     });
     const data = await res.json();

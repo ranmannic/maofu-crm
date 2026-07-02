@@ -11,14 +11,27 @@ import {
   WINE_SKU_LABELS,
   type StockBasisLine,
 } from "@/lib/inventory";
+import { roundStockQty } from "@/lib/utils";
 
-const lineSchema = z.object({
-  lineType: z.enum(["WINE", "MATERIAL"]),
-  materialId: z.string().nullable().optional(),
-  wineProductId: z.string().nullable().optional(),
-  wineSkuType: z.enum(["BOTTLE", "LITER"]).nullable().optional(),
-  quantity: z.number().int().positive(),
-});
+const lineSchema = z
+  .object({
+    lineType: z.enum(["WINE", "MATERIAL"]),
+    materialId: z.string().nullable().optional(),
+    wineProductId: z.string().nullable().optional(),
+    wineSkuType: z.enum(["BOTTLE", "LITER"]).nullable().optional(),
+    quantity: z.number().positive(),
+  })
+  .superRefine((line, ctx) => {
+    const isLiterWine =
+      line.lineType === "WINE" && line.wineSkuType === "LITER";
+    if (!isLiterWine && (!Number.isInteger(line.quantity) || line.quantity < 1)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "构成数量须为大于等于 1 的整数",
+        path: ["quantity"],
+      });
+    }
+  });
 
 const putSchema = z.object({
   lines: z.array(lineSchema).min(1),
@@ -108,7 +121,7 @@ export async function PUT(
           ? l.wineProductId?.trim() || spec.productId
           : null,
       wineSkuType: l.lineType === "WINE" ? l.wineSkuType ?? "BOTTLE" : null,
-      quantity: l.quantity,
+      quantity: roundStockQty(l.quantity),
     }));
 
     await replaceSpecStockBasis(id, lines);

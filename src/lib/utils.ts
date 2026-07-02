@@ -5,6 +5,20 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+/** 库存数量（升等）保留小数位，避免浮点误差 */
+export function roundStockQty(value: number, decimals = 3) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  const factor = 10 ** decimals;
+  return Math.round(n * factor) / factor;
+}
+
+export function formatStockQty(value: number, allowDecimal = false) {
+  const n = roundStockQty(value);
+  if (!allowDecimal || Number.isInteger(n)) return String(n);
+  return n.toFixed(3).replace(/\.?0+$/, "");
+}
+
 export function formatCurrency(amount: number) {
   const n = Number(amount);
   const safe = Number.isFinite(n) ? n : 0;

@@ -1,0 +1,88 @@
+/* Sidebar - standard edition */
+.sidebar-bg {
+  background: linear-gradient(to bottom, #3d2b1f, #2b2620, #1f1a16);
+}
+
+.sidebar-shine {
+  background-image: radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.15), transparent 40%);
+}
+
+/* Premium edition: blue-gray SaaS theme */
+[data-edition="premium"] {
+  --ink-bg: #f0f2f7;
+  --ink-paper: #ffffff;
+  --ink-card: #ffffff;
+  --ink-fg: #1f2433;
+  --ink-muted: #8a90a2;
+  --ink-border: #edf0f5;
+  --ink-accent: #5b7cfa;
+  --ink-accent-dark: #4361ee;
+  --ink-gold: #e0a83e;
+  --ink-wash: rgba(91, 124, 250, 0.05);
+}
+
+[data-edition="premium"] body {
+  background-color: #f0f2f7;
+  background-image:
+    radial-gradient(ellipse at 0% 0%, rgba(91, 124, 250, 0.05), transparent 45%),
+    radial-gradient(ellipse at 100% 0%, rgba(91, 124, 250, 0.03), transparent 40%);
+}
+
+[data-edition="premium"] .font-serif,
+[data-edition="premium"] h1,
+[data-edition="premium"] h2,
+[data-edition="premium"] h3 {
+  font-family: var(--font-sans), "PingFang SC", "Microsoft YaHei", sans-serif;
+  letter-spacing: 0.01em;
+}
+
+[data-edition="premium"] .ink-card {
+  border-radius: 14px;
+  box-shadow: 0 1px 3px rgba(31, 36, 51, 0.04), 0 8px 24px rgba(31, 36, 51, 0.05);
+  border-color: #edf0f5;
+  backdrop-filter: none;
+}
+
+[data-edition="premium"] .bg-wine {
+  background-color: var(--ink-accent);
+}
+
+[data-edition="premium"] .bg-wine:hover,
+[data-edition="premium"] .hover\:bg-wine-dark:hover {
+  background-color: var(--ink-accent-dark);
+}
+
+[data-edition="premium"] .text-wine {
+  color: var(--ink-accent);
+}
+
+[data-edition="premium"] .border-wine {
+  border-color: var(--ink-accent);
+}
+
+[data-edition="premium"] .hover\:border-wine\/40:hover {
+  border-color: rgba(91, 124, 250, 0.4);
+}
+
+[data-edition="premium"] .hover\:bg-wine\/5:hover {
+  background-color: rgba(91, 124, 250, 0.06);
+}
+
+[data-edition="premium"] .sidebar-bg {
+  background: #ffffff;
+  border-right: 1px solid #edf0f5;
+}
+
+[data-edition="premium"] .sidebar-shine {
+  background-image: none;
+}
+
+[data-edition="premium"] input,
+[data-edition="premium"] select,
+[data-edition="premium"] textarea {
+  border-radius: 10px;
+}
+
+[data-edition="premium"] .rounded-sm {
+  border-radius: 8px;
+}

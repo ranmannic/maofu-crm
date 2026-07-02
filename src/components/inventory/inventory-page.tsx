@@ -17,6 +17,7 @@ import { Modal, ModalFooter } from "@/components/ui/modal";
 import { Badge } from "@/components/ui/badge";
 import { useEdition } from "@/components/edition/edition-provider";
 import { SellableSpecsList } from "@/components/inventory/sellable-specs-list";
+import { formatStockQty } from "@/lib/utils";
 
 type Tab = "sellable" | "wine" | "materials" | "movements";
 
@@ -343,6 +344,9 @@ export function InventoryPage() {
     actionType === "CREATE_WINE" ||
     !!actionTarget;
 
+  const wineUsesDecimal =
+    actionTarget?.kind === "wine" && actionTarget.item.skuType === "LITER";
+
   if (editionLoading) {
     return <div className="text-center py-12 text-muted">加载中...</div>;
   }
@@ -471,7 +475,7 @@ export function InventoryPage() {
                               w.isLowStock ? "text-red-600 font-semibold" : "font-medium"
                             }
                           >
-                            {w.stockQty} {w.skuLabel}
+                            {formatStockQty(w.stockQty, w.skuType === "LITER")} {w.skuLabel}
                           </span>
                           {w.isLowStock && (
                             <Badge variant="warning" className="ml-1">
@@ -753,12 +757,22 @@ export function InventoryPage() {
               ) : actionType === "MANUAL_ADJUST" ? (
                 <div>
                   <Label>盘点后数量</Label>
-                  <QtyInput min={0} value={targetQty} onChange={(n) => setTargetQty(n ?? 0)} />
+                  <QtyInput
+                    min={0}
+                    allowDecimal={wineUsesDecimal}
+                    value={targetQty}
+                    onChange={(n) => setTargetQty(n ?? 0)}
+                  />
                 </div>
               ) : (
                 <div>
                   <Label>{actionType === "PURCHASE_IN" ? "入库数量" : "销库数量"}</Label>
-                  <QtyInput min={1} value={qty} onChange={(n) => setQty(n ?? 1)} />
+                  <QtyInput
+                    min={wineUsesDecimal ? 0.001 : 1}
+                    allowDecimal={wineUsesDecimal}
+                    value={qty}
+                    onChange={(n) => setQty(n ?? (wineUsesDecimal ? 0 : 1))}
+                  />
                 </div>
               )}
               {actionType !== "THRESHOLD" &&

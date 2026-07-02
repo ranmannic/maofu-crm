@@ -2,6 +2,7 @@
 
 import { MinusCircle } from "lucide-react";
 import { Label, Select, QtyInput } from "@/components/ui/input";
+import { roundStockQty } from "@/lib/utils";
 
 export type BasisLineForm = {
   lineType: "WINE" | "MATERIAL";
@@ -137,11 +138,34 @@ export function StockBasisEditor({
           </div>
 
           <div className="sm:col-span-3">
-            <Label>构成数量</Label>
+            <Label>
+              构成数量
+              {line.lineType === "WINE" && line.wineSkuType === "LITER"
+                ? "（升）"
+                : ""}
+            </Label>
             <QtyInput
-              min={1}
+              min={line.lineType === "WINE" && line.wineSkuType === "LITER" ? 0.001 : 1}
+              allowDecimal={
+                line.lineType === "WINE" && line.wineSkuType === "LITER"
+              }
+              placeholder={
+                line.lineType === "WINE" && line.wineSkuType === "LITER"
+                  ? "如 0.75"
+                  : undefined
+              }
               value={line.quantity}
-              onChange={(n) => updateLine(idx, { quantity: Math.max(1, n || 1) })}
+              onChange={(n) => {
+                const isLiterWine =
+                  line.lineType === "WINE" && line.wineSkuType === "LITER";
+                if (isLiterWine) {
+                  updateLine(idx, { quantity: n > 0 ? roundStockQty(n) : 0 });
+                } else {
+                  updateLine(idx, {
+                    quantity: Math.max(1, Math.floor(n) || 1),
+                  });
+                }
+              }}
             />
           </div>
 

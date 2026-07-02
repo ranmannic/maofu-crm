@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getEditionState, isPremiumEdition } from "@/lib/edition";
+import { roundStockQty } from "@/lib/utils";
 import type {
   Prisma,
   StockBasisLineType,
@@ -22,6 +23,11 @@ export const WINE_SKU_LABELS: Record<WineSkuType, string> = {
   BOTTLE: "瓶",
   LITER: "升",
 };
+
+function formatWineQty(qty: number, skuType: WineSkuType) {
+  if (skuType === "LITER") return roundStockQty(qty).toString();
+  return String(Math.round(qty));
+}
 
 type Tx = Prisma.TransactionClient;
 
@@ -161,10 +167,10 @@ export async function applyPoolMovement(input: MovementInput, tx?: Tx) {
         select: { name: true },
       });
       const unit = WINE_SKU_LABELS[skuType];
-      const next = stock.stockQty + input.delta;
+      const next = roundStockQty(stock.stockQty + input.delta);
       if (next < 0 && !input.allowNegative) {
         throw new Error(
-          `${product?.name ?? "产品"} 酒体库存不足（当前 ${stock.stockQty} ${unit}，需 ${Math.abs(input.delta)} ${unit}）`
+          `${product?.name ?? "产品"} 酒体库存不足（当前 ${formatWineQty(stock.stockQty, skuType)} ${unit}，需 ${formatWineQty(Math.abs(input.delta), skuType)} ${unit}）`
         );
       }
       await client.wineStock.update({
@@ -227,7 +233,7 @@ async function applyBasisDelta(
   tx: Tx
 ) {
   for (const line of lines) {
-    const delta = sign * line.quantity * specQty;
+    const delta = roundStockQty(sign * line.quantity * specQty);
     if (delta === 0) continue;
     if (line.lineType === "WINE") {
       if (!line.wineProductId) continue;
@@ -397,7 +403,11 @@ export async function replaceSpecStockBasis(
   }
 
   for (const line of lines) {
-    if (line.quantity <= 0) throw new Error("库存依据数量须大于 0");
+    if (line.lineType === "WINE" && line.wineSkuType === "LITER") {
+      if (line.quantity <= 0) throw new Error("散酒库存依据数量须大于 0");
+    } else if (line.quantity <= 0 || !Number.isInteger(line.quantity)) {
+      throw new Error("库存依据数量须为大于等于 1 的整数");
+    }
     if (line.lineType === "WINE") {
       if (!line.wineProductId) throw new Error("酒体依据须指定产品");
       if (!line.wineSkuType) throw new Error("酒体依据须指定 SKU（瓶/升）");
@@ -418,7 +428,7 @@ export async function replaceSpecStockBasis(
           materialId: line.materialId,
           wineProductId: line.wineProductId,
           wineSkuType: line.lineType === "WINE" ? line.wineSkuType : null,
-          quantity: line.quantity,
+          quantity: roundStockQty(line.quantity),
           sortOrder: index,
         },
       });

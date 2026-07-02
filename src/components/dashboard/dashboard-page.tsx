@@ -13,6 +13,7 @@ import { ProfitAnalysisModal } from "@/components/dashboard/profit-analysis-moda
 import { EditionSwitcher } from "@/components/edition/edition-switcher";
 import { useEdition } from "@/components/edition/edition-provider";
 import { ADMIN_DASHBOARD_DATA_VISIBLE_KEY } from "@/lib/constants";
+import { APP_VERSION } from "@/lib/app-version";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import type { SessionUser } from "@/lib/auth-types";
 
@@ -632,6 +633,10 @@ export function DashboardPage({ user }: { user: SessionUser }) {
           </Button>
         </ModalFooter>
       </Modal>
+
+      <p className="pt-2 pb-1 text-center text-xs text-muted">
+        系统版本 v{APP_VERSION}
+      </p>
     </div>
   );
 }

@@ -261,7 +261,7 @@ model WineStock {
   productId         String
   product           Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
   skuType           WineSkuType
-  stockQty          Int         @default(0)
+  stockQty          Float       @default(0)
   lowStockThreshold Int         @default(0)
   notes             String?
   createdAt         DateTime    @default(now())
@@ -329,7 +329,7 @@ model ProductSpecStockBasisLine {
   material      Material?          @relation(fields: [materialId], references: [id], onDelete: Cascade)
   wineProductId String?
   wineSkuType   WineSkuType?
-  quantity      Int
+  quantity      Float
   sortOrder     Int                @default(0)
 
   @@index([productSpecId, sortOrder])
@@ -556,8 +556,8 @@ model StockMovement {
   materialId    String?
   wineSkuType   WineSkuType?
   productSpecId String?
-  delta         Int
-  stockAfter    Int
+  delta         Float
+  stockAfter    Float
   reason        StockMovementReason
   notes         String?
   orderId       String?

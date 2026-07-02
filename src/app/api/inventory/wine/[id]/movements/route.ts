@@ -7,11 +7,12 @@ import {
   inventoryErrorResponse,
   requirePremiumInventoryManager,
 } from "@/lib/inventory-api";
+import { roundStockQty } from "@/lib/utils";
 
 const movementSchema = z.object({
-  quantity: z.number().int().positive(),
+  quantity: z.number().positive(),
   type: z.enum(["PURCHASE_IN", "MANUAL_WRITE_OFF", "MANUAL_ADJUST"]),
-  targetQty: z.number().int().min(0).optional(),
+  targetQty: z.number().min(0).optional(),
   notes: z.string().optional(),
 });
 
@@ -27,11 +28,28 @@ export async function POST(
     const stock = await prisma.wineStock.findUnique({ where: { id } });
     if (!stock) return apiError("酒体库存不存在", 404);
 
+    const allowDecimal = stock.skuType === "LITER";
+
+    if (!allowDecimal) {
+      if (!Number.isInteger(body.quantity)) {
+        return apiError("瓶装酒体数量须为整数");
+      }
+      if (
+        body.targetQty !== undefined &&
+        !Number.isInteger(body.targetQty)
+      ) {
+        return apiError("瓶装酒体数量须为整数");
+      }
+    }
+
     if (body.type === "MANUAL_ADJUST") {
       if (body.targetQty === undefined) {
         return apiError("盘点调整须提供目标数量");
       }
-      const delta = body.targetQty - stock.stockQty;
+      const targetQty = allowDecimal
+        ? roundStockQty(body.targetQty)
+        : body.targetQty;
+      const delta = roundStockQty(targetQty - stock.stockQty);
       if (delta === 0) {
         return NextResponse.json({ stockQty: stock.stockQty });
       }
@@ -48,8 +66,8 @@ export async function POST(
       return NextResponse.json({ stockQty: result.stockAfter });
     }
 
-    const delta =
-      body.type === "PURCHASE_IN" ? body.quantity : -body.quantity;
+    const qty = allowDecimal ? roundStockQty(body.quantity) : body.quantity;
+    const delta = body.type === "PURCHASE_IN" ? qty : -qty;
     const result = await applyPoolMovement({
       poolType: "WINE",
       productId: stock.productId,

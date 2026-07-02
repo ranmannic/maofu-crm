@@ -24,6 +24,8 @@ export function QtyInput({
   onChange,
   min = 0,
   max,
+  allowDecimal = false,
+  decimalPlaces = 3,
   className,
   ...props
 }: Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "type"> & {
@@ -31,19 +33,40 @@ export function QtyInput({
   onChange: (value: number) => void;
   min?: number;
   max?: number;
+  allowDecimal?: boolean;
+  decimalPlaces?: number;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
 
   const display =
     draft !== null ? draft : value === 0 ? "" : String(value);
 
+  function sanitize(raw: string) {
+    if (!allowDecimal) return raw.replace(/\D/g, "");
+    let next = raw.replace(/[^\d.]/g, "");
+    const dot = next.indexOf(".");
+    if (dot !== -1) {
+      next =
+        next.slice(0, dot + 1) +
+        next.slice(dot + 1).replace(/\./g, "");
+    }
+    if (dot !== -1) {
+      const [intPart, fracPart = ""] = next.split(".");
+      next = `${intPart}.${fracPart.slice(0, decimalPlaces)}`;
+    }
+    return next;
+  }
+
   function commit(raw: string) {
-    if (raw === "") {
+    if (raw === "" || raw === ".") {
       onChange(0);
       return;
     }
-    let n = parseInt(raw, 10);
+    let n = allowDecimal ? parseFloat(raw) : parseInt(raw, 10);
     if (Number.isNaN(n)) n = 0;
+    if (allowDecimal) {
+      n = Math.round(n * 10 ** decimalPlaces) / 10 ** decimalPlaces;
+    }
     if (n < min) n = min;
     if (max !== undefined && n > max) n = max;
     onChange(n);
@@ -52,7 +75,7 @@ export function QtyInput({
   return (
     <Input
       type="text"
-      inputMode="numeric"
+      inputMode={allowDecimal ? "decimal" : "numeric"}
       value={display}
       className={className}
       onFocus={(e) => {
@@ -64,9 +87,9 @@ export function QtyInput({
         setDraft(null);
       }}
       onChange={(e) => {
-        const raw = e.target.value.replace(/\D/g, "");
+        const raw = sanitize(e.target.value);
         setDraft(raw);
-        if (raw !== "") commit(raw);
+        if (raw !== "" && raw !== ".") commit(raw);
         else onChange(0);
       }}
       {...props}

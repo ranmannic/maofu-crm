@@ -1,5 +1,7 @@
 # 毛府酒庄 CRM — Docker 部署指南
 
+**当前稳定版本：`v1.0.0`**（首页底部可查看；对应 `package.json` 的 `version` 字段）
+
 本文档适用于 **线上 Docker / Docker Compose** 部署（阿里云 ECS、轻量应用服务器等），介绍从零部署、版本更新、数据备份与迁移策略。
 
 > **备选方案**：不使用 Docker 时，见 [附录 A：PM2 传统部署](#附录-apm2-传统部署)。
@@ -40,7 +42,7 @@
 用户浏览器
     │
     ▼
-Nginx 容器 (:80)  ──可选──▶  maofu-crm 容器 (:3000)
+Nginx 容器 (:80)  ──可选──▶  maofu-crm 容器 (:3001)
     │                              │
     │         或宿主机 Nginx 反代 ───┘
     ▼
@@ -108,7 +110,7 @@ nano .env
 JWT_SECRET=替换为 openssl rand -base64 32 生成的值
 INIT_DB=true          # 首次部署空数据卷设为 true
 RUN_SYNC=false
-APP_PORT=3000
+APP_PORT=3001
 ```
 
 生成 JWT 密钥：
@@ -119,7 +121,7 @@ openssl rand -base64 32
 
 ### 3.3 构建并启动
 
-**方式 A：仅应用容器**（宿主机已有 Nginx / 负载均衡反代 3000 端口）
+**方式 A：仅应用容器**（宿主机已有 Nginx / 负载均衡反代 3001 端口）
 
 ```bash
 docker compose up -d --build
@@ -136,10 +138,10 @@ docker compose --profile nginx up -d --build
 ```bash
 docker compose ps
 docker compose logs -f app --tail 50
-curl -I http://127.0.0.1:3000/login
+curl -I http://127.0.0.1:3001/login
 ```
 
-浏览器访问 `http://服务器IP:3000`（或 Nginx 80 端口）。
+浏览器访问 `http://服务器IP:3001`（或 Nginx 80 端口）。
 
 ### 3.5 宿主机 Nginx 反代（可选）
 
@@ -151,7 +153,7 @@ server {
     listen 80;
     server_name your-domain.com;
     location / {
-        proxy_pass http://127.0.0.1:3000;
+        proxy_pass http://127.0.0.1:3001;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -220,7 +222,7 @@ INIT_DB=false
 | `JWT_SECRET` | 是 | 会话签名密钥，至少 32 位随机字符串 |
 | `INIT_DB` | 首次 | 见 [3.6 节](#36-首次初始化说明重要)。**仅空数据卷**时从 `init.db` 复制；`prod.db` 已存在则不会覆盖。生产环境长期保持 `false` |
 | `RUN_SYNC` | 否 | `true` 时每次启动执行业绩/客户状态回填（升级时可临时开启） |
-| `APP_PORT` | 否 | 宿主机映射端口，默认 `3000` |
+| `APP_PORT` | 否 | 宿主机映射端口，默认 `3001` |
 | `NGINX_HTTP_PORT` | 否 | Nginx profile 对外端口，默认 `80` |
 
 容器内固定：
@@ -304,7 +306,7 @@ docker compose exec app npx tsx prisma/sync-performance.ts
 docker compose exec app npx tsx prisma/sync-customer-status.ts
 
 # 7. 业务抽查
-curl -I http://127.0.0.1:3000/login
+curl -I http://127.0.0.1:3001/login
 # 登录后抽查：订单、账期核销、客户、职能工作台
 ```
 
@@ -343,7 +345,7 @@ docker compose exec app npx tsx prisma/sync-customer-status.ts
 
 # 5. 验证
 docker compose logs app --tail 50
-curl -I http://127.0.0.1:3000/login
+curl -I http://127.0.0.1:3001/login
 ```
 
 ### 更新检查清单
@@ -363,9 +365,11 @@ curl -I http://127.0.0.1:3000/login
 - [ ] v1.0+ 升级：双版本/库存/客户政策/月度固定成本三个迁移已 `migrate deploy`（见 7.3.2）；新字段默认值正常，无需回填
 - [ ] v1.1+ 升级：销售提成三个迁移已 `migrate deploy`（见 7.3.3）；高级版导航合并（系统管理、产品展示入口）；建议执行 `sync-performance` 确保提成统计有业绩数据
 - [ ] v1.2+ 升级：库存重构四个迁移已 `migrate deploy`（见 [7.3.4](#734-v12-高级版库存重构重要)）；**已备份**；`INIT_DB=false`；升级后核对酒体 SKU、物料、规格库存依据
+- [ ] **v1.0.0 升级**（当前正式版）：含 v1.0～v1.2 全部能力 + 散酒小数库存依据迁移（见 [7.3.5](#735-v100-正式版当前发布)）；`20260702120000_stock_basis_decimal_liter` 已 apply；高级版主题样式正常（蓝灰背景/白色卡片）
 - [ ] 抽查：订单导出、账期核销待审核、职能工作台「核销待审核」提醒
 - [ ] v1.1+ 抽查：高级版「系统管理」（渠道/账号）、「销售提成」规则与月度统计、产品管理→产品展示、职能账号产品展示
 - [ ] v1.2+ 抽查：库存管理（酒体/物料/可售数）、销售库存一览、规格配置库存、发货扣库与回库、账期账龄 Tab
+- [ ] v1.0.0 抽查：首页底部显示 `v1.0.0`；散酒规格库存依据可填 `0.75` 升；销售提成统计、高级版 UI 与生产线一致
 - [ ] 上线后登录页无默认密码提示；确认已修改全部账号密码
 
 ### 6.2 临时开启启动时自动回填
@@ -418,8 +422,9 @@ curl -I http://127.0.0.1:3000/login
 | v1.0+ | **普通版/高级版双版本**、高级版库存管理、客户政策（拿货价/备注）、首页自定义日期与盈利分析（月度固定成本）、分享改为复制链接/微信分享 | **仅需 migrate**（见下方 7.3.2）；新字段均有默认值，无需手动回填 |
 | v1.1+ | **销售提成**（高级版 ADMIN）、高级版导航合并（系统管理、产品展示入口）、职能账号可访问产品展示 | **migrate + 建议 sync-performance**（见 7.3.3） |
 | v1.2+ | **高级版库存重构**（酒体瓶/升、物料、规格库存依据、订单出库/回库联动）、账期账龄、销售库存一览、导航返回保留筛选、图片压缩 | **migrate only**（见 [7.3.4](#734-v12-高级版库存重构重要)）；升级前**必须备份**；升级后核对酒体 SKU 与规格库存依据 |
+| **v1.0.0** | **正式版发布**：整合双版本、销售提成、库存重构；散酒升单位小数依据；高级版主题样式修复；首页版本号 | **migrate only**（见 [7.3.5](#735-v100-正式版当前发布)）；自 v0.9 以前版本升级需按 7.3.2～7.3.4 顺序补齐全部迁移 |
 
-详细字段说明见历史版本记录；当前仓库含 v0.8.0 基线及后续功能迭代（含 v1.0 双版本、v1.1 销售提成、**v1.2 库存重构**）。
+详细字段说明见历史版本记录；**当前 Git 主线对应正式版 `v1.0.0`**（含 v0.8 基线至库存重构及后续修复）。
 
 ### 7.3.2 v1.0 数据结构变更与老数据兼容（重要）
 
@@ -508,6 +513,62 @@ curl -I http://127.0.0.1:3000/login
 | 账期账龄 | 账期核销页 30/60/90 天账龄 Tab | `/credit` |
 
 升级后抽查：创建酒体 SKU 并入库 → 配置规格依据（含物料）→ 库存管理「规格最大可售数」→ 销售「库存一览」→ 订单发货后酒体/物料扣减 → 取消发货回库。
+
+### 7.3.5 v1.0.0 正式版（当前发布）
+
+**Git 标签 / `package.json` 版本：`v1.0.0`。** 本版本为对外正式版，整合此前文档中的 v1.0（双版本/库存初版）、v1.1（销售提成）、v1.2（库存重构）及上线前修复项。从**已有生产线**（如已部署 `0b6b4b8` 或更早 commit）升级时，请按 [6.0 节](#60-生产更新安全流程推荐按顺序执行) 备份后拉取 `main` 并重建镜像。
+
+#### 自 v0.9 及更早版本升级（首次上 v1.0.0 全量能力）
+
+需确保以下迁移**全部** `migrate deploy` 成功（entrypoint 自动执行，可用 `migrate status` 核对）：
+
+| 阶段 | 迁移目录（节选） | 说明 |
+|------|------------------|------|
+| v0.9 | `20260623140000_reconciliation_review_on_site_stocking` 等 | 核销审核、现场铺货 |
+| v1.0 能力 | `20260626210000_premium_edition_inventory`、`20260627041217_*`、`20260627043839_*` | 双版本、客户政策、月度固定成本 |
+| v1.1 能力 | `20260630142550_*`、`20260630144014_*`、`20260630145235_*` | 销售提成规则与索引 |
+| v1.2 能力 | `20260701120000_*`～`20260701190000_*` | 酒体/物料/规格库存依据、瓶升 SKU |
+| v1.0.0 | `20260702120000_stock_basis_decimal_liter` | 散酒小数升（见下表） |
+
+> 若当前库**尚未**执行 v1.2 四个迁移，**必须先阅读并执行** [7.3.2](#732-v10-数据结构变更与老数据兼容重要)～[7.3.4](#734-v12-高级版库存重构重要) 中的备份与核对步骤，再部署 v1.0.0。
+
+#### v1.0.0 新增迁移（相对 v1.2 代码基线）
+
+| 迁移目录 | 变更内容 | 老数据影响 |
+|----------|----------|------------|
+| `20260702120000_stock_basis_decimal_liter` | `ProductSpecStockBasisLine.quantity`、`WineStock.stockQty`、`StockMovement.delta/stockAfter` 由 INTEGER 改为 **REAL** | 已有整数值**原样保留**（如 100 瓶仍为 100.0）；仅开放散酒 **0.75** 等小数依据与升库存 |
+
+> ✅ **数据安全要点**
+>
+> 1. **升级前必做**：备份 `prod.db` 与 uploads 卷；`INIT_DB=false`。
+> 2. **无需回填**：不改动订单、客户、提成规则、业绩记录等业务行；仅字段类型扩展。
+> 3. **建议核对**：高级版「产品管理 → 规格 → 配置库存」中，散酒（升）SKU 依据是否需改为实际毫升/升（如 `0.75`）。
+> 4. **提成统计**：若历史订单缺 `PerformanceRecord`，仍建议 `sync-performance`（见 7.3.3）。
+
+#### v1.0.0 应用层变更（无 migration）
+
+| 项 | 说明 |
+|----|------|
+| 高级版主题 | `edition-theme.css` 独立加载，修复主界面蓝灰背景与白色卡片样式 |
+| 首页版本号 | 数据概览页底部显示 `系统版本 v1.0.0` |
+| 默认端口 | 应用监听 **3001**（`docker-compose.yml` / `APP_PORT`） |
+
+#### 生产线升级命令（简版）
+
+```bash
+cd /opt/maofu-crm
+grep -E '^INIT_DB' .env   # 必须为 false
+./scripts/backup-docker-db.sh ./backups
+# 备份 uploads 卷（见 8.4 节）
+git fetch origin && git pull origin main
+docker compose build
+docker compose up -d
+docker compose exec app npx prisma migrate status
+docker compose exec app npx tsx prisma/sync-performance.ts   # 按需
+curl -I http://127.0.0.1:3001/login
+```
+
+升级后抽查：高级版 UI 与 `http://crm.maofujiuzhuang.com` 一致；库存/提成/账期模块正常；首页底部版本号为 `v1.0.0`。
 
 ### 7.3.1 功能与路由说明（v0.8+ / v0.9+）
 
@@ -658,7 +719,7 @@ docker compose logs app
 
 ```bash
 docker compose ps
-curl -I http://127.0.0.1:3000/login
+curl -I http://127.0.0.1:3001/login
 docker compose logs app --tail 100
 ```
 
