@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth";
+import { isSalesFieldRole } from "@/lib/sales-role";
+import { canAccessOrderSales } from "@/lib/sales-team";
 import { apiError, handleApiError } from "@/lib/api";
 import { enrichOrderForList } from "@/lib/serializers";
 import { logOrderChange } from "@/lib/order-audit";
@@ -11,11 +13,12 @@ import {
   calcProfitMargin,
   syncPaymentFields,
 } from "@/lib/order-math";
-import { processPaymentWithReconciliation, ensureCreditOrderActive, requiresPaymentReconciliation } from "@/lib/credit";
+import { processPaymentWithReconciliation, ensureCreditOrderActive } from "@/lib/credit";
 import { deductOrderStock, restoreOrderStock } from "@/lib/inventory";
 import {
   calcRefundPerformanceAmount,
   recordRefundPerformance,
+  rebalanceOrderCollectPerformance,
 } from "@/lib/performance";
 
 const refundSchema = z.object({
@@ -80,10 +83,10 @@ export async function GET(
     });
 
     if (!order) return apiError("订单不存在", 404);
-    if (session.role === "SALES" && order.salesId !== session.id) {
+    if (!(await canAccessOrderSales(session, order.salesId))) {
       return apiError("无权限", 403);
     }
-    if (order.deletedAt && session.role === "SALES") {
+    if (order.deletedAt && isSalesFieldRole(session.role)) {
       return apiError("订单已删除", 404);
     }
 
@@ -132,7 +135,7 @@ export async function PATCH(
     });
     if (!existing) return apiError("订单不存在", 404);
 
-    if (session.role === "SALES" && existing.salesId !== session.id) {
+    if (!(await canAccessOrderSales(session, existing.salesId))) {
       return apiError("无权限", 403);
     }
 
@@ -155,7 +158,7 @@ export async function PATCH(
     if (body.refund && !["OPERATIONS", "ADMIN"].includes(session.role)) {
       return apiError("只有职能或管理员可设置退款", 403);
     }
-    if (body.handlerId !== undefined && session.role === "SALES") {
+    if (body.handlerId !== undefined && isSalesFieldRole(session.role)) {
       return apiError("销售无法修改处理人员", 403);
     }
 
@@ -176,18 +179,50 @@ export async function PATCH(
       changes.handlerId = { from: existing.handlerId, to: body.handlerId };
     }
 
-    if (body.totalAmount !== undefined && body.totalAmount !== existing.totalAmount) {
+    const totalAmountAdjusted =
+      body.totalAmount !== undefined &&
+      body.totalAmount !== existing.totalAmount;
+
+    let adjustedProductAmount: number | undefined;
+    if (totalAmountAdjusted) {
       if (!body.amountAdjustReason?.trim()) {
         return apiError("修改总金额需填写理由");
       }
+      const shippingFee = existing.shippingFee ?? 0;
+      const otherFee = existing.otherFee ?? 0;
+      adjustedProductAmount = calcPerformanceAmount(
+        body.totalAmount!,
+        shippingFee,
+        otherFee
+      );
       orderData.totalAmount = body.totalAmount;
+      orderData.productAmount = adjustedProductAmount;
       orderData.amountAdjustReason = body.amountAdjustReason;
       changes.totalAmount = {
         from: existing.totalAmount,
         to: body.totalAmount,
         reason: body.amountAdjustReason,
       };
+      changes.productAmount = {
+        from: existing.productAmount,
+        to: adjustedProductAmount,
+      };
     }
+
+    if (totalAmountAdjusted && body.payment) {
+      await prisma.order.update({
+        where: { id },
+        data: {
+          totalAmount: body.totalAmount,
+          productAmount: adjustedProductAmount,
+          amountAdjustReason: body.amountAdjustReason,
+        },
+      });
+      existing.totalAmount = body.totalAmount!;
+      existing.productAmount = adjustedProductAmount!;
+    }
+
+    let clearCollectPerformance = false;
 
     if (body.payment) {
       const total = (body.totalAmount ?? existing.totalAmount) as number;
@@ -199,21 +234,6 @@ export async function PATCH(
         (body.payment.paymentStatus === "UNPAID" || body.payment.paidAmount <= 0)
       ) {
         return apiError("未付款时不可核销产品数量");
-      }
-
-      const needsReconcile = requiresPaymentReconciliation(
-        existing,
-        body.payment.paymentStatus
-      );
-      if (
-        needsReconcile &&
-        positiveReconcileItems.length === 0
-      ) {
-        return apiError(
-          body.payment.paymentStatus === "PAID"
-            ? "账期订单结清需填写核销产品及数量"
-            : "部分付款需填写核销产品及数量"
-        );
       }
 
       if (body.payment.paymentStatus === "UNPAID") {
@@ -233,6 +253,7 @@ export async function PATCH(
               ? "ACTIVE"
               : null;
         changes.payment = synced;
+        clearCollectPerformance = true;
       } else {
         try {
           const synced = await processPaymentWithReconciliation(
@@ -240,7 +261,8 @@ export async function PATCH(
             body.payment,
             positiveReconcileItems,
             session.id,
-            session.name
+            session.name,
+            { paymentOnly: true }
           );
           changes.payment = { ...synced, reconcileItems: body.reconcileItems };
         } catch (err) {
@@ -291,6 +313,18 @@ export async function PATCH(
     const order = await prisma.$transaction(async (tx) => {
       if (Object.keys(orderData).length > 0) {
         await tx.order.update({ where: { id }, data: orderData });
+      }
+
+      if (clearCollectPerformance) {
+        await tx.performanceRecord.deleteMany({
+          where: { orderId: id, type: "COLLECT" },
+        });
+      } else if (
+        totalAmountAdjusted ||
+        body.payment ||
+        body.refund
+      ) {
+        await rebalanceOrderCollectPerformance(tx, id);
       }
 
       if (body.shipping) {
@@ -448,7 +482,7 @@ export async function DELETE(
     if (!existing) return apiError("订单不存在", 404);
     if (existing.deletedAt) return apiError("订单已删除", 400);
 
-    if (session.role === "SALES" && existing.salesId !== session.id) {
+    if (!(await canAccessOrderSales(session, existing.salesId))) {
       return apiError("无权限", 403);
     }
 

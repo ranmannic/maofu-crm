@@ -1,14 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { Wine } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 import { ADMIN_DASHBOARD_DATA_VISIBLE_KEY } from "@/lib/constants";
 
 export default function LoginPage() {
-  const router = useRouter();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -23,7 +21,8 @@ export default function LoginPage() {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
+        credentials: "same-origin",
+        body: JSON.stringify({ username: username.trim(), password }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -31,8 +30,7 @@ export default function LoginPage() {
         return;
       }
       sessionStorage.setItem(ADMIN_DASHBOARD_DATA_VISIBLE_KEY, "true");
-      router.push("/");
-      router.refresh();
+      window.location.assign("/");
     } catch {
       setError("网络错误，请重试");
     } finally {

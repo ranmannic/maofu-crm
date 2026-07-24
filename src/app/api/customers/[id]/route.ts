@@ -4,6 +4,11 @@ import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth";
 import { apiError, handleApiError } from "@/lib/api";
 import { serializeCustomer } from "@/lib/serializers";
+import {
+  getManagerContactVisibility,
+  getSalesScopeIds,
+  isCustomerVisibleInTeamScope,
+} from "@/lib/sales-team";
 
 const updateSchema = z.object({
   name: z.string().min(1).optional(),
@@ -36,13 +41,22 @@ export async function GET(
     });
 
     if (!customer) return apiError("客户不存在", 404);
+
     if (session.role === "SALES") {
       if (customer.salesId !== session.id || customer.deletedAt) {
         return apiError("无权限", 403);
       }
+    } else if (session.role === "SALES_MANAGER") {
+      const teamScope = await getSalesScopeIds(session);
+      if (!isCustomerVisibleInTeamScope(session, customer, teamScope)) {
+        return apiError("无权限", 403);
+      }
     }
 
-    return NextResponse.json(serializeCustomer(customer, session));
+    const managerCanViewContact = await getManagerContactVisibility(session);
+    return NextResponse.json(
+      serializeCustomer(customer, session, { managerCanViewContact })
+    );
   } catch (error) {
     return handleApiError(error);
   }
@@ -56,6 +70,10 @@ export async function PATCH(
     const session = await requireSession(["SALES", "ADMIN"]);
     const { id } = await params;
     const body = updateSchema.parse(await request.json());
+
+    if (session.role === "SALES_MANAGER") {
+      return apiError("销售管理仅可查看客户", 403);
+    }
 
     const existing = await prisma.customer.findUnique({ where: { id } });
     if (!existing) return apiError("客户不存在", 404);
@@ -116,6 +134,10 @@ export async function DELETE(
   try {
     const session = await requireSession();
     const { id } = await params;
+
+    if (session.role === "SALES_MANAGER") {
+      return apiError("销售管理仅可查看客户", 403);
+    }
 
     const existing = await prisma.customer.findUnique({ where: { id } });
     if (!existing) return apiError("客户不存在", 404);

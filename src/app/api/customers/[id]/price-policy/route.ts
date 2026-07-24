@@ -1,20 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { requireSession } from "@/lib/auth";
+import { requireSession, withSalesManagerAccess } from "@/lib/auth";
 import { apiError, handleApiError } from "@/lib/api";
 import {
   getCustomerPricePolicy,
   upsertCustomerPricePolicyNote,
 } from "@/lib/customer-price-policy";
+import type { SessionUser } from "@/lib/auth-types";
+import { canReadCustomerRecord } from "@/lib/sales-team";
 
-async function assertCustomerAccess(customerId: string, session: { role: string; id: string }) {
+async function assertCustomerAccess(customerId: string, session: SessionUser) {
   const customer = await prisma.customer.findUnique({
     where: { id: customerId },
     select: { id: true, salesId: true, deletedAt: true },
   });
   if (!customer || customer.deletedAt) return null;
-  if (session.role === "SALES" && customer.salesId !== session.id) return null;
+  if (!(await canReadCustomerRecord(session, customer))) return null;
   return customer;
 }
 
@@ -23,7 +25,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await requireSession(["ADMIN", "SALES", "OPERATIONS"]);
+    const session = await requireSession(
+      withSalesManagerAccess(["ADMIN", "SALES", "OPERATIONS"])
+    );
     const { id } = await params;
     const customer = await assertCustomerAccess(id, session);
     if (!customer) return apiError("客户不存在", 404);

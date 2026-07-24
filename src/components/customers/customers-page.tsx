@@ -62,6 +62,7 @@ interface CustomersPageState {
 
 export function CustomersPage({ user }: { user: SessionUser }) {
   const isAdmin = user.role === "ADMIN";
+  const isReadOnlyManager = user.role === "SALES_MANAGER";
   const snapshot = useListPageSnapshot<CustomersPageState>(CUSTOMERS_ROUTE_KEY);
   const saved = snapshot?.data;
   const restoreOnMount = useRef(saved?.customers !== undefined);
@@ -264,10 +265,12 @@ export function CustomersPage({ user }: { user: SessionUser }) {
           </p>
         </div>
         <div className="page-header-actions">
+        {!isReadOnlyManager && (
         <Button onClick={openCreate}>
           <Plus className="h-4 w-4 mr-1" />
           新增客户
         </Button>
+        )}
         </div>
       </div>
 
@@ -382,7 +385,7 @@ export function CustomersPage({ user }: { user: SessionUser }) {
                         <td className="py-3">{c._count.orders}</td>
                         <td className="py-3">{formatDate(c.createdAt)}</td>
                         <td className="py-3 space-x-2">
-                          {!c.isDeleted && (
+                          {!isReadOnlyManager && !c.isDeleted && (
                             <>
                               <button onClick={() => openEdit(c)} className="text-wine hover:underline text-xs inline-flex items-center gap-0.5">
                                 <Pencil className="h-3 w-3" />编辑
@@ -398,12 +401,12 @@ export function CustomersPage({ user }: { user: SessionUser }) {
                               </button>
                             </>
                           )}
-                          {isAdmin && c.isDeleted && (
+                          {!isReadOnlyManager && isAdmin && c.isDeleted && (
                             <button onClick={() => handleRestore(c)} className="text-wine hover:underline text-xs inline-flex items-center gap-0.5">
                               <RotateCcw className="h-3 w-3" />恢复
                             </button>
                           )}
-                          {isAdmin && !c.isDeleted && (
+                          {!isReadOnlyManager && isAdmin && !c.isDeleted && (
                             <button
                               onClick={() => { setTransferTarget(c); setTransferSalesId(""); setTransferOpen(true); }}
                               className="text-muted hover:text-wine text-xs inline-flex items-center gap-0.5"

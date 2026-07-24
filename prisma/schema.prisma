@@ -9,6 +9,7 @@ datasource db {
 
 enum Role {
   SALES
+  SALES_MANAGER
   OPERATIONS
   ADMIN
 }
@@ -132,6 +133,11 @@ model User {
   password  String
   name      String
   role      Role
+  salesTeamName          String?
+  canViewCustomerContact Boolean  @default(false)
+  salesManagerId         String?
+  salesManager           User?    @relation("SalesTeam", fields: [salesManagerId], references: [id], onDelete: SetNull)
+  managedSales           User[]   @relation("SalesTeam")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -247,6 +253,7 @@ model Product {
   origin         String?
   thumbnailKey   String?
   shareToken     String?  @unique
+  deletedAt      DateTime?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -312,6 +319,7 @@ model ProductSpec {
   wholesaleFloorPrice Float?
   description       String?
   thumbnailKey      String?
+  deletedAt         DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

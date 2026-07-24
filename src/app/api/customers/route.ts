@@ -5,6 +5,11 @@ import { requireSession } from "@/lib/auth";
 import { apiError, handleApiError } from "@/lib/api";
 import { parsePagination, paginatedResponse } from "@/lib/pagination";
 import { serializeCustomer } from "@/lib/serializers";
+import {
+  applySalesIdScope,
+  getManagerContactVisibility,
+  getSalesScopeIds,
+} from "@/lib/sales-team";
 import type { Prisma } from "@/generated/prisma/client";
 
 const customerSchema = z.object({
@@ -25,9 +30,18 @@ export async function GET(request: NextRequest) {
     const showDeleted = searchParams.get("showDeleted") === "true";
 
     const where: Prisma.CustomerWhereInput = {};
+    const teamScope =
+      session.role === "ADMIN"
+        ? null
+        : session.role === "SALES_MANAGER"
+          ? await getSalesScopeIds(session)
+          : [session.id];
 
     if (session.role === "SALES") {
       where.salesId = session.id;
+      where.deletedAt = null;
+    } else if (session.role === "SALES_MANAGER") {
+      applySalesIdScope(where, teamScope);
       where.deletedAt = null;
     } else if (showDeleted) {
       where.deletedAt = { not: null };
@@ -47,6 +61,8 @@ export async function GET(request: NextRequest) {
       ];
     }
 
+    const managerCanViewContact = await getManagerContactVisibility(session);
+
     const [customers, total] = await Promise.all([
       prisma.customer.findMany({
         where,
@@ -62,7 +78,9 @@ export async function GET(request: NextRequest) {
       prisma.customer.count({ where }),
     ]);
 
-    const data = customers.map((c) => serializeCustomer(c, session));
+    const data = customers.map((c) =>
+      serializeCustomer(c, session, { managerCanViewContact })
+    );
     return NextResponse.json(paginatedResponse(data, total, page, pageSize));
   } catch (error) {
     return handleApiError(error);

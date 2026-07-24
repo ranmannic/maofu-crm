@@ -13,15 +13,18 @@ import { apiError, handleApiError } from "@/lib/api";
 import { parsePagination, paginatedResponse } from "@/lib/pagination";
 import { enrichOrderForList } from "@/lib/serializers";
 import { logOrderChange } from "@/lib/order-audit";
-import { processPaymentWithReconciliation, requiresPaymentReconciliation, ensureCreditOrderActive } from "@/lib/credit";
+import { processPaymentWithReconciliation, ensureCreditOrderActive } from "@/lib/credit";
 import { deductOrderStock } from "@/lib/inventory";
 import { formatShippingAddress } from "@/lib/address-parse";
 import { validateNonGiftDuplicateItems } from "@/lib/order-items";
+import { isProductActive, isSpecActive } from "@/lib/product-query";
 import {
   buildOrderListWhere,
   orderListInclude,
   parseOrderListFilters,
 } from "@/lib/orders-query";
+import { isSalesIdInScope } from "@/lib/sales-role";
+import { getOrderSalesScopeFilter, getSalesScopeIds } from "@/lib/sales-team";
 import type { Prisma } from "@/generated/prisma/client";
 
 const orderItemSchema = z.object({
@@ -77,6 +80,9 @@ export async function GET(request: NextRequest) {
     const { page, pageSize, skip, take } = parsePagination(searchParams);
     const filters = parseOrderListFilters(searchParams);
     const where = buildOrderListWhere(session, filters);
+    if (session.role === "SALES_MANAGER") {
+      where.salesId = await getOrderSalesScopeFilter(session);
+    }
     const isAdmin = session.role === "ADMIN";
 
     const [orders, total] = await Promise.all([
@@ -99,7 +105,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await requireSession(["SALES", "ADMIN"]);
+    const session = await requireSession(["SALES", "SALES_MANAGER", "ADMIN"]);
     const body = createOrderSchema.parse(await request.json());
 
     const customer = await prisma.customer.findUnique({
@@ -108,6 +114,12 @@ export async function POST(request: NextRequest) {
     if (!customer || customer.deletedAt) return apiError("客户不存在", 404);
     if (session.role === "SALES" && customer.salesId !== session.id) {
       return apiError("只能为自己的客户下单", 403);
+    }
+    if (session.role === "SALES_MANAGER") {
+      const scope = await getSalesScopeIds(session);
+      if (!isSalesIdInScope(scope, customer.salesId)) {
+        return apiError("只能为队内销售的客户下单", 403);
+      }
     }
 
     const specIds = [...new Set(body.items.map((i) => i.productSpecId))];
@@ -118,6 +130,13 @@ export async function POST(request: NextRequest) {
 
     if (specs.length !== specIds.length) {
       return apiError("部分产品规格不存在");
+    }
+
+    const inactiveSpec = specs.find(
+      (s) => !isSpecActive(s) || !isProductActive(s.product)
+    );
+    if (inactiveSpec) {
+      return apiError("部分产品规格已下架，无法下单");
     }
 
     const duplicateError = validateNonGiftDuplicateItems(body.items);
@@ -256,15 +275,8 @@ export async function POST(request: NextRequest) {
       if (!["OPERATIONS", "ADMIN"].includes(session.role)) {
         return apiError("仅职能或管理员可在创建时设置收款", 403);
       }
-      const needsReconcile = requiresPaymentReconciliation(
-        { paymentStatus: "UNPAID", paidAmount: 0, creditStatus: null },
-        body.payment.paymentStatus
-      );
       let reconcileItems: { orderItemId: string; quantity: number }[] = [];
-      if (needsReconcile) {
-        if (!body.reconcileItems?.length) {
-          return apiError("创建部分付款订单需填写核销产品及数量", 400);
-        }
+      if (body.reconcileItems?.length) {
         reconcileItems = body.reconcileItems
           .filter((i) => i.quantity > 0)
           .map((item) => {
@@ -286,9 +298,6 @@ export async function POST(request: NextRequest) {
             }
             return { orderItemId: orderItem.id, quantity: item.quantity };
           });
-        if (reconcileItems.length === 0) {
-          return apiError("创建部分付款订单需填写核销产品及数量", 400);
-        }
       }
       try {
         await processPaymentWithReconciliation(
@@ -296,7 +305,8 @@ export async function POST(request: NextRequest) {
           body.payment,
           reconcileItems,
           session.id,
-          session.name
+          session.name,
+          { paymentOnly: true }
         );
       } catch (err) {
         await prisma.order.delete({ where: { id: order.id } });

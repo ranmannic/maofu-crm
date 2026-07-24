@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireSession } from "@/lib/auth";
+import { requireSession, withSalesManagerAccess } from "@/lib/auth";
+import { isSalesFieldRole } from "@/lib/sales-role";
 import { apiError, handleApiError } from "@/lib/api";
 import {
   processPaymentWithReconciliation,
@@ -8,6 +9,7 @@ import {
 } from "@/lib/credit";
 import { logOrderChange } from "@/lib/order-audit";
 import { prisma } from "@/lib/prisma";
+import { canAccessOrderSales } from "@/lib/sales-team";
 
 const bodySchema = z.object({
   payment: z.object({
@@ -30,12 +32,21 @@ export async function POST(
   { params }: { params: Promise<{ orderId: string }> }
 ) {
   try {
-    const session = await requireSession(["SALES", "OPERATIONS", "ADMIN"]);
+    const session = await requireSession(withSalesManagerAccess(["SALES", "OPERATIONS", "ADMIN"]));
     const { orderId } = await params;
     const body = bodySchema.parse(await request.json());
     const reconcileItems = body.reconcileItems.filter((i) => i.quantity > 0);
 
-    if (session.role === "SALES") {
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      select: { salesId: true, deletedAt: true },
+    });
+    if (!order || order.deletedAt) return apiError("订单不存在", 404);
+    if (!(await canAccessOrderSales(session, order.salesId))) {
+      return apiError("无权限", 403);
+    }
+
+    if (isSalesFieldRole(session.role)) {
       const result = await submitReconciliationForReview(
         orderId,
         body.payment,
@@ -68,12 +79,12 @@ export async function POST(
       reconcileItems: body.reconcileItems,
     });
 
-    const order = await prisma.order.findUnique({
+    const orderDetail = await prisma.order.findUnique({
       where: { id: orderId },
       include: { items: true, creditLines: true },
     });
 
-    return NextResponse.json({ success: true, order, payment: synced });
+    return NextResponse.json({ success: true, order: orderDetail, payment: synced });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return apiError(error.issues[0]?.message || "参数错误");

@@ -295,14 +295,36 @@ export default function ProductsPage() {
   }
 
   async function deleteProduct(id: string) {
-    if (!confirm("确定删除此产品？")) return;
-    await fetch(`/api/products/${id}`, { method: "DELETE" });
+    if (
+      !confirm(
+        "确定下架并删除此产品？列表中将不再显示，历史订单、提成与库存记录仍会保留。"
+      )
+    ) {
+      return;
+    }
+    const res = await fetch(`/api/products/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert((data as { error?: string }).error || "删除失败");
+      return;
+    }
     await load();
   }
 
   async function deleteSpec(id: string) {
-    if (!confirm("确定删除此规格？")) return;
-    await fetch(`/api/products/specs/${id}`, { method: "DELETE" });
+    if (
+      !confirm(
+        "确定删除此规格？列表中将不再显示，已有订单与提成规则仍会保留。"
+      )
+    ) {
+      return;
+    }
+    const res = await fetch(`/api/products/specs/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert((data as { error?: string }).error || "删除失败");
+      return;
+    }
     await load();
   }
 

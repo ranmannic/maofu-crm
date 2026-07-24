@@ -3,6 +3,8 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth";
 import { apiError, handleApiError } from "@/lib/api";
+import { canReadCustomerRecord } from "@/lib/sales-team";
+import type { SessionUser } from "@/lib/auth-types";
 
 const addressSchema = z.object({
   name: z.string().min(1, "姓名不能为空"),
@@ -20,10 +22,10 @@ const addressSchema = z.object({
   { message: "请至少填写省、市或区/县中的一项", path: ["province"] }
 );
 
-async function assertCustomerAccess(customerId: string, session: { id: string; role: string }) {
+async function assertCustomerAccess(customerId: string, session: SessionUser) {
   const customer = await prisma.customer.findUnique({ where: { id: customerId } });
   if (!customer || customer.deletedAt) return { error: apiError("客户不存在", 404) as NextResponse };
-  if (session.role === "SALES" && customer.salesId !== session.id) {
+  if (!(await canReadCustomerRecord(session, customer))) {
     return { error: apiError("无权限", 403) as NextResponse };
   }
   return { customer };

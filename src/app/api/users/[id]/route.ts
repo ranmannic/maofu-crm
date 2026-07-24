@@ -3,10 +3,14 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { hashPassword, requireSession } from "@/lib/auth";
 import { apiError, handleApiError } from "@/lib/api";
+import { assignSalesTeam } from "@/lib/sales-team";
 
 const updateSchema = z.object({
   name: z.string().min(1).optional(),
   password: z.string().min(6).optional(),
+  salesTeamName: z.string().nullable().optional(),
+  canViewCustomerContact: z.boolean().optional(),
+  managedSalesIds: z.array(z.string()).optional(),
 });
 
 export async function PATCH(
@@ -17,6 +21,28 @@ export async function PATCH(
     await requireSession(["ADMIN"]);
     const { id } = await params;
     const body = updateSchema.parse(await request.json());
+
+    const existing = await prisma.user.findUnique({ where: { id } });
+    if (!existing) return apiError("用户不存在", 404);
+
+    if (
+      body.salesTeamName !== undefined ||
+      body.canViewCustomerContact !== undefined ||
+      body.managedSalesIds !== undefined
+    ) {
+      if (existing.role !== "SALES_MANAGER") {
+        return apiError("仅销售管理账号可配置小队");
+      }
+      try {
+        await assignSalesTeam(id, {
+          salesTeamName: body.salesTeamName,
+          canViewCustomerContact: body.canViewCustomerContact,
+          managedSalesIds: body.managedSalesIds,
+        });
+      } catch (e) {
+        return apiError(e instanceof Error ? e.message : "小队配置失败");
+      }
+    }
 
     const data: { name?: string; password?: string } = {};
     if (body.name) data.name = body.name;
@@ -31,6 +57,9 @@ export async function PATCH(
         name: true,
         role: true,
         createdAt: true,
+        salesTeamName: true,
+        canViewCustomerContact: true,
+        managedSales: { select: { id: true, name: true } },
       },
     });
 

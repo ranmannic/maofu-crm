@@ -3,13 +3,14 @@ import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth";
 import { handleApiError } from "@/lib/api";
 import { parsePagination, paginatedResponse } from "@/lib/pagination";
+import { canReadCustomerRecord } from "@/lib/sales-team";
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ customerId: string }> }
 ) {
   try {
-    const session = await requireSession(["ADMIN", "SALES"]);
+    const session = await requireSession(["ADMIN", "SALES", "SALES_MANAGER"]);
     const { customerId } = await params;
     const { searchParams } = new URL(request.url);
     const { page, pageSize, skip, take } = parsePagination(searchParams, 10);
@@ -21,7 +22,7 @@ export async function GET(
     if (!customer || customer.deletedAt) {
       return NextResponse.json({ error: "客户不存在" }, { status: 404 });
     }
-    if (session.role === "SALES" && customer.salesId !== session.id) {
+    if (!(await canReadCustomerRecord(session, customer))) {
       return NextResponse.json({ error: "无权限" }, { status: 403 });
     }
 

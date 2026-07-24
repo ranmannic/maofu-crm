@@ -471,6 +471,10 @@ export async function getLowStockAlerts() {
 
 export async function listSellableSpecs() {
   const specs = await prisma.productSpec.findMany({
+    where: {
+      deletedAt: null,
+      product: { deletedAt: null },
+    },
     include: {
       product: { select: { id: true, name: true } },
       stockBasisLines: {

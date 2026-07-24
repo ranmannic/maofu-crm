@@ -171,6 +171,9 @@ interface FollowUpPageState {
 
 export function FollowUpPage({ user }: { user: SessionUser }) {
   const isAdmin = user.role === "ADMIN";
+  const isReadOnlyManager = user.role === "SALES_MANAGER";
+  const showSalesFilter = isAdmin || isReadOnlyManager;
+  const showSalesColumn = showSalesFilter;
   const snapshot = useListPageSnapshot<FollowUpPageState>(FOLLOW_UP_ROUTE_KEY);
   const saved = snapshot?.data;
   const restoreOnMount = useRef(saved?.rows !== undefined);
@@ -558,7 +561,7 @@ export function FollowUpPage({ user }: { user: SessionUser }) {
           </div>
 
           <div className="filter-grid">
-            <FilterField label="客户名 / 电话" className="filter-field-wide">
+            <FilterField label="客户名 / 电话 / 销售" className="filter-field-wide">
               <Input
                 placeholder="输入关键词"
                 value={draftQ}
@@ -566,7 +569,7 @@ export function FollowUpPage({ user }: { user: SessionUser }) {
                 onKeyDown={(e) => e.key === "Enter" && handleSearch()}
               />
             </FilterField>
-            {isAdmin && (
+            {showSalesFilter && (
               <FilterField label="负责销售">
                 <Select
                   value={draftSalesFilter}
@@ -607,7 +610,7 @@ export function FollowUpPage({ user }: { user: SessionUser }) {
                       <th className="pb-3">客户</th>
                       <th className="pb-3">类型</th>
                       <th className="pb-3">上次下单距今</th>
-                      {isAdmin && <th className="pb-3">负责销售</th>}
+                      {showSalesColumn && <th className="pb-3">负责销售</th>}
                       <th className="pb-3">最近跟进</th>
                       <th className="pb-3">下次跟进</th>
                       <th className="pb-3">操作</th>
@@ -726,7 +729,7 @@ export function FollowUpPage({ user }: { user: SessionUser }) {
                             <span className="text-muted">—</span>
                           )}
                         </td>
-                        {isAdmin && (
+                        {showSalesColumn && (
                           <td className="py-3">{row.sales.name}</td>
                         )}
                         <td className="py-3">
@@ -761,7 +764,8 @@ export function FollowUpPage({ user }: { user: SessionUser }) {
                           )}
                         </td>
                         <td className="py-3 space-x-2 whitespace-nowrap">
-                          {row.followUpStatus === "ACTIVE" ? (
+                          {!isReadOnlyManager &&
+                            (row.followUpStatus === "ACTIVE" ? (
                             <>
                               <button
                                 onClick={() => openFollowModal(row)}
@@ -788,7 +792,7 @@ export function FollowUpPage({ user }: { user: SessionUser }) {
                               <RotateCcw className="h-3 w-3" />
                               恢复跟进
                             </button>
-                          )}
+                          ))}
                         </td>
                       </tr>
                     ))}

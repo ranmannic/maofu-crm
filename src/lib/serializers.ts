@@ -1,4 +1,5 @@
 import type { SessionUser } from "@/lib/auth-types";
+import { canViewCustomerPhone } from "@/lib/sales-role";
 import { SPEC_UNIT_LABELS } from "@/lib/constants";
 import {
   calcOrderProfit,
@@ -66,10 +67,12 @@ export function serializeCustomer<
       parent?: { id: string; name: string } | null;
     } | null;
   },
->(customer: T, session: SessionUser) {
-  const canViewFullPhone =
-    session.role === "ADMIN" ||
-    (session.role === "SALES" && customer.salesId === session.id);
+>(customer: T, session: SessionUser, opts?: { managerCanViewContact?: boolean }) {
+  const canViewFullPhone = canViewCustomerPhone(
+    session,
+    customer.salesId,
+    opts?.managerCanViewContact
+  );
 
   const channelLabel = customer.channel
     ? customer.channel.parent

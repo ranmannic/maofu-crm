@@ -116,13 +116,17 @@ export async function validateRuleInput(
 
   const product = await prisma.product.findUnique({
     where: { id: data.productId },
-    select: { id: true },
+    select: { id: true, deletedAt: true },
   });
-  if (!product) return "产品不存在";
+  if (!product || product.deletedAt) return "产品不存在";
 
   if (data.productSpecId) {
     const spec = await prisma.productSpec.findFirst({
-      where: { id: data.productSpecId, productId: data.productId },
+      where: {
+        id: data.productSpecId,
+        productId: data.productId,
+        deletedAt: null,
+      },
     });
     if (!spec) return "规格不属于所选产品";
   }

@@ -26,19 +26,19 @@ export const navItems: {
   /** 高级版侧栏隐藏（功能合并到其他入口） */
   hideInPremium?: boolean;
 }[] = [
-  { href: "/", label: "数据概览", icon: LayoutDashboard, roles: ["ADMIN", "SALES"] },
+  { href: "/", label: "数据概览", icon: LayoutDashboard, roles: ["ADMIN", "SALES", "SALES_MANAGER"] },
   { href: "/workbench", label: "职能工作台", icon: ListTodo, roles: ["OPERATIONS"] },
-  { href: "/customers", label: "客户管理", icon: Users, roles: ["ADMIN", "SALES"] },
-  { href: "/follow-up", label: "客户跟进", icon: Phone, roles: ["ADMIN", "SALES"] },
-  { href: "/orders", label: "订单管理", icon: ShoppingCart, roles: ["ADMIN", "SALES", "OPERATIONS"] },
-  { href: "/credit", label: "账期核销", icon: ClipboardList, roles: ["ADMIN", "SALES", "OPERATIONS"] },
+  { href: "/customers", label: "客户管理", icon: Users, roles: ["ADMIN", "SALES", "SALES_MANAGER"] },
+  { href: "/follow-up", label: "客户跟进", icon: Phone, roles: ["ADMIN", "SALES", "SALES_MANAGER"] },
+  { href: "/orders", label: "订单管理", icon: ShoppingCart, roles: ["ADMIN", "SALES", "SALES_MANAGER", "OPERATIONS"] },
+  { href: "/credit", label: "账期核销", icon: ClipboardList, roles: ["ADMIN", "SALES", "SALES_MANAGER", "OPERATIONS"] },
   { href: "/products", label: "产品管理", icon: Package, roles: ["ADMIN", "OPERATIONS"] },
   { href: "/inventory", label: "库存管理", icon: Warehouse, roles: ["ADMIN", "OPERATIONS"], premiumOnly: true },
   {
     href: "/stock-overview",
     label: "库存一览",
     icon: LayoutList,
-    roles: ["SALES"],
+    roles: ["SALES", "SALES_MANAGER"],
     premiumOnly: true,
   },
   { href: "/commissions", label: "销售提成", icon: BadgePercent, roles: ["ADMIN"], premiumOnly: true },
@@ -46,7 +46,7 @@ export const navItems: {
     href: "/catalog",
     label: "产品展示",
     icon: Wine,
-    roles: ["ADMIN", "SALES"],
+    roles: ["ADMIN", "SALES", "SALES_MANAGER"],
     hideInPremium: true,
   },
   {

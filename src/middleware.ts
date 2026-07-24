@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { jwtVerify } from "jose";
 import type { Role } from "@/generated/prisma/client";
-
-const SECRET = new TextEncoder().encode(
-  process.env.JWT_SECRET || "maofu-crm-dev-secret-change-in-production"
-);
+import {
+  SESSION_COOKIE_NAME,
+  sessionCookieOptions,
+  verifySessionToken,
+} from "@/lib/session-config";
 
 const publicPaths = ["/login", "/api/auth/login"];
 
@@ -26,7 +26,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const token = request.cookies.get("maofu_session")?.value;
+  const token = request.cookies.get(SESSION_COOKIE_NAME)?.value;
 
   if (!token) {
     if (pathname.startsWith("/api/")) {
@@ -35,50 +35,53 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  try {
-    const { payload } = await jwtVerify(token, SECRET);
-    const role = payload.role as Role;
-
-    if (
-      pathname.startsWith("/users") ||
-      pathname.startsWith("/channels") ||
-      pathname.startsWith("/system")
-    ) {
-      if (role !== "ADMIN") {
-        if (pathname.startsWith("/api/")) {
-          return NextResponse.json({ error: "无权限" }, { status: 403 });
-        }
-        return NextResponse.redirect(new URL("/", request.url));
-      }
-    }
-
-    if (pathname.startsWith("/products")) {
-      if (role !== "ADMIN" && role !== "OPERATIONS") {
-        if (pathname.startsWith("/api/")) {
-          return NextResponse.json({ error: "无权限" }, { status: 403 });
-        }
-        return NextResponse.redirect(new URL("/", request.url));
-      }
-    }
-
-    if (pathname.startsWith("/workbench")) {
-      if (role !== "OPERATIONS") {
-        if (pathname.startsWith("/api/")) {
-          return NextResponse.json({ error: "无权限" }, { status: 403 });
-        }
-        return NextResponse.redirect(new URL("/", request.url));
-      }
-    }
-
-    return NextResponse.next();
-  } catch {
+  const session = await verifySessionToken(token);
+  if (!session) {
     if (pathname.startsWith("/api/")) {
       return NextResponse.json({ error: "登录已过期" }, { status: 401 });
     }
     const response = NextResponse.redirect(new URL("/login", request.url));
-    response.cookies.delete("maofu_session");
+    response.cookies.set(SESSION_COOKIE_NAME, "", {
+      ...sessionCookieOptions(),
+      maxAge: 0,
+    });
     return response;
   }
+
+  const role = session.role as Role;
+
+  if (
+    pathname.startsWith("/users") ||
+    pathname.startsWith("/channels") ||
+    pathname.startsWith("/system")
+  ) {
+    if (role !== "ADMIN") {
+      if (pathname.startsWith("/api/")) {
+        return NextResponse.json({ error: "无权限" }, { status: 403 });
+      }
+      return NextResponse.redirect(new URL("/", request.url));
+    }
+  }
+
+  if (pathname.startsWith("/products")) {
+    if (role !== "ADMIN" && role !== "OPERATIONS") {
+      if (pathname.startsWith("/api/")) {
+        return NextResponse.json({ error: "无权限" }, { status: 403 });
+      }
+      return NextResponse.redirect(new URL("/", request.url));
+    }
+  }
+
+  if (pathname.startsWith("/workbench")) {
+    if (role !== "OPERATIONS") {
+      if (pathname.startsWith("/api/")) {
+        return NextResponse.json({ error: "无权限" }, { status: 403 });
+      }
+      return NextResponse.redirect(new URL("/", request.url));
+    }
+  }
+
+  return NextResponse.next();
 }
 
 export const config = {

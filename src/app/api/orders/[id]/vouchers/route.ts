@@ -1,14 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireSession } from "@/lib/auth";
+import { requireSession, withSalesManagerAccess } from "@/lib/auth";
 import { apiError, handleApiError } from "@/lib/api";
 import type { OrderVoucherCategory } from "@/generated/prisma/client";
 import { saveVoucherFile } from "@/lib/vouchers";
+import type { SessionUser } from "@/lib/auth-types";
+import { canAccessOrderSales } from "@/lib/sales-team";
 
-async function assertOrderAccess(orderId: string, session: { id: string; role: string }) {
+async function assertOrderAccess(orderId: string, session: SessionUser) {
   const order = await prisma.order.findUnique({ where: { id: orderId } });
   if (!order || order.deletedAt) return { error: apiError("订单不存在", 404) as NextResponse };
-  if (session.role === "SALES" && order.salesId !== session.id) {
+  if (!(await canAccessOrderSales(session, order.salesId))) {
     return { error: apiError("无权限", 403) as NextResponse };
   }
   return { order };
@@ -48,7 +50,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await requireSession(["SALES", "OPERATIONS", "ADMIN"]);
+    const session = await requireSession(withSalesManagerAccess(["SALES", "OPERATIONS", "ADMIN"]));
     const { id: orderId } = await params;
     const access = await assertOrderAccess(orderId, session);
     if (access.error) return access.error;

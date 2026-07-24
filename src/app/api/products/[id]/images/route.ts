@@ -7,6 +7,7 @@ import {
   deleteProductMediaFile,
   resolveProductMediaPath,
 } from "@/lib/product-media";
+import { isProductActive } from "@/lib/product-query";
 import fs from "fs/promises";
 
 export async function POST(
@@ -17,7 +18,7 @@ export async function POST(
     await requireSession(PRODUCT_MANAGER_ROLES);
     const { id } = await params;
     const product = await prisma.product.findUnique({ where: { id } });
-    if (!product) return apiError("产品不存在", 404);
+    if (!product || !isProductActive(product)) return apiError("产品不存在", 404);
 
     const form = await request.formData();
     const file = form.get("file");

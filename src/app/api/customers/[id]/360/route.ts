@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireSession } from "@/lib/auth";
+import { requireSession, withSalesManagerAccess } from "@/lib/auth";
 import { apiError, handleApiError } from "@/lib/api";
 import { serializeCustomer } from "@/lib/serializers";
 import { PAID_ORDER_FILTER } from "@/lib/customer-status";
+import {
+  canReadCustomerRecord,
+  getManagerContactVisibility,
+} from "@/lib/sales-team";
 import {
   getChurnLevel,
   getCustomerSegment,
@@ -20,7 +24,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await requireSession(["ADMIN", "SALES", "OPERATIONS"]);
+    const session = await requireSession(
+      withSalesManagerAccess(["ADMIN", "SALES", "OPERATIONS"])
+    );
     const { id } = await params;
 
     const customer = await prisma.customer.findUnique({
@@ -60,9 +66,11 @@ export async function GET(
     });
 
     if (!customer || customer.deletedAt) return apiError("客户不存在", 404);
-    if (session.role === "SALES" && customer.salesId !== session.id) {
+    if (!(await canReadCustomerRecord(session, customer))) {
       return apiError("无权限", 403);
     }
+
+    const managerCanViewContact = await getManagerContactVisibility(session);
 
     const paidOrders = await prisma.order.findMany({
       where: { customerId: id, ...PAID_ORDER_FILTER, deletedAt: null },
@@ -73,7 +81,9 @@ export async function GET(
     const lastOrderAt = paidOrders[0]?.orderedAt ?? null;
     const segment = getCustomerSegment(customer.customerStatus, lastOrderAt);
     const latestFollowUp = customer.followUpRecords[0] ?? null;
-    const serialized = serializeCustomer(customer, session);
+    const serialized = serializeCustomer(customer, session, {
+      managerCanViewContact,
+    });
 
     const profile = {
       id: customer.id,

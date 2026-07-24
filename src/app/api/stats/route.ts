@@ -16,10 +16,17 @@ import {
   calcRefundPerformanceAmount,
   syncPerformanceData,
 } from "@/lib/performance";
+import { summarizePeriodPerformance } from "@/lib/stats-performance";
+import {
+  applySalesIdScope,
+  getSalesScopeIds,
+  hasOrgWidePerformanceStats,
+} from "@/lib/sales-team";
+import { buildTeamPerformanceStats, pickMyTeam } from "@/lib/team-stats";
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await requireSession(["ADMIN", "SALES"]);
+    const session = await requireSession(["ADMIN", "SALES", "SALES_MANAGER"]);
     const { searchParams } = new URL(request.url);
     const period = (searchParams.get("period") || "month") as Period;
     const customStart = searchParams.get("start") || undefined;
@@ -28,14 +35,44 @@ export async function GET(request: NextRequest) {
 
     const { start, end } = getDateRange(period, customStart, customEnd);
     const isAdmin = session.role === "ADMIN";
+    const isManager = session.role === "SALES_MANAGER";
+    const wideDashboard = hasOrgWidePerformanceStats(session.role);
 
-    const salesScope =
+    const teamScope =
+      session.role === "SALES"
+        ? [session.id]
+        : isManager
+          ? await getSalesScopeIds(session)
+          : null;
+
+    const scopedSalesId =
       session.role === "SALES"
         ? session.id
-        : salesIdFilter || undefined;
+        : isAdmin
+          ? salesIdFilter
+          : isManager &&
+              salesIdFilter &&
+              teamScope !== null &&
+              teamScope.includes(salesIdFilter)
+            ? salesIdFilter
+            : undefined;
+
+    const curveSalesFilter = isAdmin
+      ? salesIdFilter
+      : isManager
+        ? scopedSalesId
+        : undefined;
 
     try {
-      await syncPerformanceData(salesScope);
+      const syncId =
+        session.role === "SALES"
+          ? session.id
+          : isAdmin
+            ? salesIdFilter
+            : isManager && scopedSalesId
+              ? scopedSalesId
+              : undefined;
+      await syncPerformanceData(syncId);
     } catch (error) {
       console.error("[stats] syncPerformanceData", error);
     }
@@ -43,21 +80,30 @@ export async function GET(request: NextRequest) {
     const customerWhere: Record<string, unknown> = {
       createdAt: { gte: start, lte: end },
     };
-    if (salesScope) customerWhere.salesId = salesScope;
+    applySalesIdScope(customerWhere, teamScope, scopedSalesId);
 
     const perfWhere: Record<string, unknown> = {
       type: "COLLECT",
       eventAt: { gte: start, lte: end },
       order: { deletedAt: null },
     };
-    if (salesScope) perfWhere.salesId = salesScope;
+    applySalesIdScope(perfWhere, teamScope, scopedSalesId);
 
     const refundOrderWhere: Record<string, unknown> = {
       deletedAt: null,
       refundAmount: { gt: 0 },
       refundedAt: { gte: start, lte: end },
     };
-    if (salesScope) refundOrderWhere.salesId = salesScope;
+    applySalesIdScope(refundOrderWhere, teamScope, scopedSalesId);
+
+    const orderPeriodWhere: Record<string, unknown> = {
+      deletedAt: null,
+      orderedAt: { gte: start, lte: end },
+    };
+    applySalesIdScope(orderPeriodWhere, teamScope, scopedSalesId);
+
+    const showTeamBoard =
+      isAdmin || session.role === "SALES" || isManager;
 
     const channelInclude = {
       select: {
@@ -77,6 +123,7 @@ export async function GET(request: NextRequest) {
       topCategories,
       periodOrdersForShip,
       periodOrdersForStats,
+      periodOrdersForTeams,
     ] = await Promise.all([
       prisma.performanceRecord.findMany({
         where: perfWhere,
@@ -100,29 +147,39 @@ export async function GET(request: NextRequest) {
         where: customerWhere,
         include: { channel: channelInclude },
       }),
-      isAdmin
-        ? prisma.user.findMany({
-            where: { role: "SALES" },
-            select: { id: true, name: true },
-          })
+      wideDashboard
+        ? isAdmin
+          ? prisma.user.findMany({
+              where: { role: "SALES" },
+              select: { id: true, name: true },
+            })
+          : isManager
+            ? prisma.user.findMany({
+                where: { salesManagerId: session.id, role: "SALES" },
+                select: { id: true, name: true },
+                orderBy: { name: "asc" },
+              })
+            : Promise.resolve([])
         : Promise.resolve([]),
       prisma.performanceRecord.findMany({
         where: {
           type: "COLLECT",
-          ...(salesScope ? { salesId: salesScope } : {}),
           order: { deletedAt: null },
+          ...(Object.keys(perfWhere).includes("salesId")
+            ? { salesId: perfWhere.salesId as string | { in: string[] } }
+            : {}),
         },
         select: { eventAt: true, amount: true, salesId: true },
       }),
       prisma.customer.findMany({
-        where: buildCurveCustomerWhere(session, salesIdFilter),
+        where: buildCurveCustomerWhere(session, teamScope, curveSalesFilter),
         select: {
           createdAt: true,
           deletedAt: true,
           salesId: true,
         },
       }),
-      isAdmin
+      wideDashboard
         ? prisma.channelType.findMany({
             where: { parentId: null },
             orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
@@ -132,19 +189,11 @@ export async function GET(request: NextRequest) {
           })
         : Promise.resolve([]),
       prisma.order.findMany({
-        where: {
-          deletedAt: null,
-          orderedAt: { gte: start, lte: end },
-          ...(salesScope ? { salesId: salesScope } : {}),
-        },
+        where: orderPeriodWhere,
         select: { isShipped: true, productCostTotal: true, totalAmount: true, shippingFee: true, otherFee: true },
       }),
       prisma.order.findMany({
-        where: {
-          deletedAt: null,
-          orderedAt: { gte: start, lte: end },
-          ...(salesScope ? { salesId: salesScope } : {}),
-        },
+        where: orderPeriodWhere,
         select: {
           id: true,
           salesId: true,
@@ -158,6 +207,23 @@ export async function GET(request: NextRequest) {
           },
         },
       }),
+      showTeamBoard
+        ? prisma.order.findMany({
+            where: {
+              deletedAt: null,
+              orderedAt: { gte: start, lte: end },
+            },
+            select: {
+              id: true,
+              salesId: true,
+              productAmount: true,
+              performanceRecords: {
+                where: { type: "COLLECT" },
+                select: { amount: true },
+              },
+            },
+          })
+        : Promise.resolve([]),
     ]);
 
     const periodPerf = summarizePeriodPerformance(periodOrdersForStats);
@@ -262,7 +328,7 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    const categoryPerformanceStats = isAdmin
+    const categoryPerformanceStats = wideDashboard
       ? topCategories.map((category) => {
           const childNames = new Set(category.children.map((c) => c.name));
           const childStats = category.children.map((child) => {
@@ -305,7 +371,7 @@ export async function GET(request: NextRequest) {
         })
       : undefined;
 
-    const salesStats = isAdmin
+    const salesStats = wideDashboard
       ? salesUsers.map((sales) => {
           const salesOrders = periodOrdersForStats.filter(
             (o) => o.salesId === sales.id
@@ -366,7 +432,7 @@ export async function GET(request: NextRequest) {
     const performanceDetails = buildPerformanceDetails(
       periodOrdersForStats,
       collectRecords,
-      isAdmin
+      wideDashboard
     );
 
     let fixedCostStats:
@@ -426,6 +492,25 @@ export async function GET(request: NextRequest) {
       ),
     };
 
+    let teamPerformance:
+      | {
+          teams: Awaited<
+            ReturnType<typeof buildTeamPerformanceStats>
+          >["teams"];
+          myTeam: Awaited<
+            ReturnType<typeof buildTeamPerformanceStats>
+          >["myTeam"];
+        }
+      | undefined;
+
+    if (showTeamBoard) {
+      const built = await buildTeamPerformanceStats(periodOrdersForTeams);
+      teamPerformance = {
+        teams: built.teams,
+        myTeam: isManager ? pickMyTeam(built.teams, session.id) : null,
+      };
+    }
+
     return NextResponse.json({
       period: { start, end, type: period },
       customerStats: {
@@ -455,34 +540,12 @@ export async function GET(request: NextRequest) {
       salesStats,
       monthlyCurves,
       fixedCostStats,
-      salesUsers: isAdmin ? salesUsers : undefined,
+      salesUsers: wideDashboard ? salesUsers : undefined,
+      teamPerformance,
     });
   } catch (error) {
     return handleApiError(error);
   }
-}
-
-function summarizePeriodPerformance(
-  orders: {
-    productAmount: number;
-    performanceRecords: { amount: number }[];
-  }[]
-) {
-  return orders.reduce(
-    (acc, order) => {
-      const maxPerf = Number(order.productAmount) || 0;
-      const collected = order.performanceRecords.reduce(
-        (s, r) => s + (Number(r.amount) || 0),
-        0
-      );
-      const capped = Math.min(collected, maxPerf);
-      acc.total += maxPerf;
-      acc.collected += capped;
-      acc.uncollected += Math.max(0, maxPerf - capped);
-      return acc;
-    },
-    { total: 0, collected: 0, uncollected: 0 }
-  );
 }
 
 function buildPerformanceDetails(
@@ -569,11 +632,12 @@ function buildPerformanceDetails(
 
 function buildCurveCustomerWhere(
   session: { role: string; id: string },
+  teamScope: string[] | null,
   salesIdFilter?: string
 ) {
   const where: Record<string, unknown> = {};
   if (session.role === "SALES") where.salesId = session.id;
-  else if (salesIdFilter) where.salesId = salesIdFilter;
+  else applySalesIdScope(where, teamScope, salesIdFilter);
   return where;
 }
 

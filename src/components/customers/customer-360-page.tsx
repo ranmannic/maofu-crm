@@ -83,7 +83,9 @@ export function Customer360Page({
   const [notesDraft, setNotesDraft] = useState("");
   const [birthdayDraft, setBirthdayDraft] = useState("");
   const [saving, setSaving] = useState(false);
-  const canEditFollowUp = ["ADMIN", "SALES"].includes(user.role);
+  const isReadOnlyManager = user.role === "SALES_MANAGER";
+  const canEditFollowUp =
+    !isReadOnlyManager && ["ADMIN", "SALES"].includes(user.role);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -187,7 +189,7 @@ export function Customer360Page({
           <div className="flex gap-2 items-center">
             <Phone className="h-4 w-4 text-muted shrink-0" />
             <span className="flex-1">{profile.phone || "—"}</span>
-            {profile.phone && (
+            {profile.phone && !isReadOnlyManager && (
               <a
                 href={`tel:${profile.phone.replace(/\s/g, "")}`}
                 className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-wine/10 text-wine hover:bg-wine/20 transition-colors shrink-0"

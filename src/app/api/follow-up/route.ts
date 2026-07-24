@@ -7,6 +7,11 @@ import { serializeCustomer } from "@/lib/serializers";
 import { PAID_ORDER_FILTER } from "@/lib/customer-status";
 import type { SessionUser } from "@/lib/auth-types";
 import {
+  applySalesIdScope,
+  getManagerContactVisibility,
+  getSalesScopeIds,
+} from "@/lib/sales-team";
+import {
   getChurnLevel,
   getCustomerSegment,
   getReminderStatus,
@@ -58,7 +63,8 @@ function mapCustomerRow(
     orders: { orderedAt: Date }[];
     _count: { orders: number; followUpRecords: number };
   },
-  session: SessionUser
+  session: SessionUser,
+  managerCanViewContact?: boolean
 ) {
   const lastOrderAt = c.orders[0]?.orderedAt ?? null;
   const paidOrderCount = c._count.orders;
@@ -69,7 +75,7 @@ function mapCustomerRow(
       : null;
   const latest = c.followUpRecords[0] ?? null;
   const reminderStatus = getReminderStatus(latest?.nextFollowUpAt);
-  const serialized = serializeCustomer(c, session);
+  const serialized = serializeCustomer(c, session, { managerCanViewContact });
 
   return {
     id: c.id,
@@ -107,7 +113,7 @@ function mapCustomerRow(
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await requireSession(["ADMIN", "SALES"]);
+    const session = await requireSession(["ADMIN", "SALES", "SALES_MANAGER"]);
     const { searchParams } = new URL(request.url);
     const { page, pageSize, skip, take } = parsePagination(searchParams);
     const q = searchParams.get("q")?.trim();
@@ -126,9 +132,22 @@ export async function GET(request: NextRequest) {
 
     if (session.role === "SALES") {
       where.salesId = session.id;
+    } else if (session.role === "SALES_MANAGER") {
+      const teamScope = await getSalesScopeIds(session);
+      if (
+        salesIdFilter &&
+        teamScope !== null &&
+        !teamScope.includes(salesIdFilter)
+      ) {
+        where.salesId = { in: ["__no_sales_scope__"] };
+      } else {
+        applySalesIdScope(where, teamScope, salesIdFilter);
+      }
     } else if (salesIdFilter) {
       where.salesId = salesIdFilter;
     }
+
+    const managerCanViewContact = await getManagerContactVisibility(session);
 
     if (segment === "ABANDONED") {
       where.followUpStatus = "ABANDONED";
@@ -137,7 +156,11 @@ export async function GET(request: NextRequest) {
     }
 
     if (q) {
-      where.OR = [{ name: { contains: q } }, { phone: { contains: q } }];
+      where.OR = [
+        { name: { contains: q } },
+        { phone: { contains: q } },
+        { sales: { name: { contains: q } } },
+      ];
     }
 
     if (closedOnly) {
@@ -150,7 +173,9 @@ export async function GET(request: NextRequest) {
       orderBy: { updatedAt: "desc" },
     });
 
-    let rows = customers.map((c) => mapCustomerRow(c, session));
+    let rows = customers.map((c) =>
+      mapCustomerRow(c, session, managerCanViewContact)
+    );
 
     if (segment === "LEAD" || segment === "CLOSED" || segment === "CHURNED") {
       rows = rows.filter((r) => r.segment === segment);
@@ -177,6 +202,9 @@ export async function GET(request: NextRequest) {
     const statsWhere: Record<string, unknown> = { deletedAt: null };
     if (session.role === "SALES") {
       statsWhere.salesId = session.id;
+    } else if (session.role === "SALES_MANAGER") {
+      const teamScope = await getSalesScopeIds(session);
+      applySalesIdScope(statsWhere, teamScope, salesIdFilter);
     } else if (salesIdFilter) {
       statsWhere.salesId = salesIdFilter;
     }
@@ -224,7 +252,13 @@ export async function GET(request: NextRequest) {
             select: { id: true, name: true },
             orderBy: { name: "asc" },
           })
-        : undefined,
+        : session.role === "SALES_MANAGER"
+          ? await prisma.user.findMany({
+              where: { salesManagerId: session.id, role: "SALES" },
+              select: { id: true, name: true },
+              orderBy: { name: "asc" },
+            })
+          : undefined,
     });
   } catch (error) {
     return handleApiError(error);

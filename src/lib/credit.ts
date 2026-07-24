@@ -5,8 +5,12 @@ import { toBottleCount, resolveBottlesPerUnit } from "@/lib/unit-convert";
 import { syncPaymentFields, calcPerformanceAmount } from "@/lib/order-math";
 import {
   calcReconcilePerformanceAmount,
+  capCollectPerformanceIncrement,
   recordCollectPerformance,
+  rebalanceOrderCollectPerformance,
+  sumOrderCollectPerformance,
 } from "@/lib/performance";
+import { isCreditReconcilePaymentMismatch } from "@/lib/reconcile-ui";
 import type {
   CreditOrderStatus,
   PaymentStatus,
@@ -74,7 +78,7 @@ export function requiresPaymentReconciliation(
 }
 
 /** 同步所有符合条件的订单到账期核销（补全历史数据） */
-export async function syncEligibleCreditOrders(salesId?: string) {
+export async function syncEligibleCreditOrders(salesScope?: string | { in: string[] }) {
   const where: Record<string, unknown> = {
     deletedAt: null,
     isPaid: false,
@@ -84,7 +88,7 @@ export async function syncEligibleCreditOrders(salesId?: string) {
       { paymentStatus: "UNPAID", isShipped: true },
     ],
   };
-  if (salesId) where.salesId = salesId;
+  if (salesScope) where.salesId = salesScope;
 
   const orders = await prisma.order.findMany({
     where,
@@ -434,6 +438,8 @@ type ReconciliationApplyOptions = {
   existingRecordId?: string;
   reviewerId?: string;
   reviewerName?: string;
+  /** 订单管理仅登记收款，不要求填写核销数量 */
+  paymentOnly?: boolean;
 };
 
 function parseReconcileItemsFromRecordDetail(
@@ -462,7 +468,7 @@ async function loadOrderForReconciliation(orderId: string) {
     where: { id: orderId },
     include: {
       items: true,
-      creditLines: { select: { unreconciledQty: true } },
+      creditLines: { select: { orderItemId: true, unreconciledQty: true } },
     },
   });
   if (!order) throw new Error("订单不存在");
@@ -470,10 +476,33 @@ async function loadOrderForReconciliation(orderId: string) {
   return order;
 }
 
-function computeReconciliationPlan(
+function orderReconcilePaymentLines(
+  order: Awaited<ReturnType<typeof loadOrderForReconciliation>>
+) {
+  return order.items.map((item) => ({
+    unitPrice: item.unitPrice,
+    isGift: item.isGift,
+    unreconciledQty:
+      order.creditLines.find((l) => l.orderItemId === item.id)?.unreconciledQty ??
+      item.quantity,
+  }));
+}
+
+function orderHasReconcilePaymentMismatch(
+  order: Awaited<ReturnType<typeof loadOrderForReconciliation>>
+) {
+  return isCreditReconcilePaymentMismatch(
+    order.totalAmount,
+    order.paidAmount,
+    orderReconcilePaymentLines(order)
+  );
+}
+
+async function computeReconciliationPlan(
   order: Awaited<ReturnType<typeof loadOrderForReconciliation>>,
   payment: ReconciliationPaymentInput,
-  reconcileItems: ReconcileItemInput[]
+  reconcileItems: ReconcileItemInput[],
+  planOptions?: Pick<ReconciliationApplyOptions, "paymentOnly">
 ) {
   const synced = syncPaymentFields(
     payment.paymentStatus,
@@ -489,47 +518,65 @@ function computeReconciliationPlan(
   }
 
   const needsReconcile = requiresPaymentReconciliation(order, synced.paymentStatus);
+  const paymentMismatch = orderHasReconcilePaymentMismatch(order);
 
-  if (needsReconcile) {
-    if (reconcileItems.length === 0) {
-      throw new Error(
-        synced.paymentStatus === "PAID"
-          ? "账期订单结清需填写核销产品及数量"
-          : "部分付款需填写核销产品及数量"
-      );
-    }
+  if (
+    needsReconcile &&
+    reconcileItems.length === 0 &&
+    !planOptions?.paymentOnly &&
+    !paymentMismatch
+  ) {
+    throw new Error(
+      synced.paymentStatus === "PAID"
+        ? "账期订单结清需填写核销产品及数量"
+        : "部分付款需填写核销产品及数量"
+    );
   }
 
   const paidAt = payment.paidAt ? new Date(payment.paidAt) : synced.paidAt;
   const shippingFee = order.shippingFee ?? 0;
   const otherFee = order.otherFee ?? 0;
-  const feeTotal = shippingFee + otherFee;
-  const productsAllReconciled =
-    order.creditLines.length > 0 &&
-    order.creditLines.every((l) => l.unreconciledQty <= 0);
   const maxProductPerf =
     order.productAmount > 0
       ? order.productAmount
       : calcPerformanceAmount(order.totalAmount, shippingFee, otherFee);
 
+  const orderAfterPayment = {
+    totalAmount: order.totalAmount,
+    shippingFee: order.shippingFee,
+    otherFee: order.otherFee,
+    productAmount: order.productAmount,
+    paidAmount: synced.paidAmount,
+    paymentStatus: synced.paymentStatus,
+  };
+
+  const alreadyCollected = await sumOrderCollectPerformance(prisma, order.id);
+  const paymentIncrement = Math.max(0, synced.paidAmount - order.paidAmount);
+
   let performanceAmount = 0;
   if (needsReconcile && reconcileItems.length > 0) {
-    performanceAmount = calcReconcilePerformanceAmount(order.items, reconcileItems);
-  } else if (
-    productsAllReconciled &&
-    synced.paidAmount > order.paidAmount &&
-    synced.paymentStatus !== "UNPAID"
-  ) {
-    const increment = synced.paidAmount - order.paidAmount;
-    performanceAmount = Math.round(Math.min(increment, feeTotal) * 100) / 100;
-  } else if (synced.paymentStatus === "PAID" && synced.paidAmount > 0) {
-    performanceAmount = maxProductPerf;
-  } else if (synced.paymentStatus === "PARTIAL" && synced.paidAmount > 0) {
-    const ratio =
-      order.totalAmount > 0
-        ? Math.min(1, synced.paidAmount / order.totalAmount)
-        : 0;
-    performanceAmount = maxProductPerf * ratio;
+    const reconcilePerf = calcReconcilePerformanceAmount(
+      order.items,
+      reconcileItems
+    );
+    performanceAmount = capCollectPerformanceIncrement(
+      orderAfterPayment,
+      alreadyCollected,
+      reconcilePerf
+    );
+  } else if (synced.paymentStatus !== "UNPAID" && synced.paidAmount > 0) {
+    // 产品已全部核销时仅补收款项；或非账期式部分/结清：按本次实收增量计业绩
+    let proposed = paymentIncrement;
+    if (proposed <= 0 && synced.paymentStatus === "PAID") {
+      proposed = maxProductPerf;
+    }
+    if (proposed > 0) {
+      performanceAmount = capCollectPerformanceIncrement(
+        orderAfterPayment,
+        alreadyCollected,
+        proposed
+      );
+    }
   }
 
   let creditStatus: CreditOrderStatus | null = order.creditStatus;
@@ -561,7 +608,7 @@ export async function submitReconciliationForReview(
   userName: string
 ) {
   const order = await loadOrderForReconciliation(orderId);
-  const plan = computeReconciliationPlan(order, payment, reconcileItems);
+  const plan = await computeReconciliationPlan(order, payment, reconcileItems);
 
   const existingPending = await prisma.creditReconciliationRecord.findFirst({
     where: { orderId, reviewStatus: "PENDING" },
@@ -659,7 +706,9 @@ export async function processPaymentWithReconciliation(
   options?: ReconciliationApplyOptions
 ) {
   const order = await loadOrderForReconciliation(orderId);
-  const plan = computeReconciliationPlan(order, payment, reconcileItems);
+  const plan = await computeReconciliationPlan(order, payment, reconcileItems, {
+    paymentOnly: options?.paymentOnly,
+  });
   const { synced, needsReconcile, performanceAmount, creditStatus, paidAt } =
     plan;
 
@@ -767,21 +816,23 @@ export async function processPaymentWithReconciliation(
     ) {
       await markCustomerClosedOnPayment(order.customerId, tx);
     }
+
+    await rebalanceOrderCollectPerformance(tx, orderId);
   });
 
   return synced;
 }
 
-export async function getCreditStats(salesId?: string) {
+export async function getCreditStats(salesScope?: string | { in: string[] }) {
   const orderWhere: Record<string, unknown> = {
     deletedAt: null,
     creditStatus: { in: ["ACTIVE", "BAD_DEBT"] },
   };
-  if (salesId) orderWhere.salesId = salesId;
+  if (salesScope) orderWhere.salesId = salesScope;
 
   const inventoryWhere: Record<string, unknown> = {};
-  if (salesId) {
-    inventoryWhere.customer = { salesId };
+  if (salesScope) {
+    inventoryWhere.customer = { salesId: salesScope };
   }
 
   const [inventories, activeCustomers, activeOrders, badDebtOrders, specMap] =
@@ -891,12 +942,12 @@ export function matchesCreditAgingBucket(
   return creditOrderAgingBucket(orderedAt) === bucket;
 }
 
-export async function getCreditAgingStats(salesId?: string) {
+export async function getCreditAgingStats(salesScope?: string | { in: string[] }) {
   const orders = await prisma.order.findMany({
     where: {
       deletedAt: null,
       creditStatus: "ACTIVE",
-      ...(salesId ? { salesId } : {}),
+      ...(salesScope ? { salesId: salesScope } : {}),
     },
     select: {
       id: true,

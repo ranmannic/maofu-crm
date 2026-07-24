@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireSession } from "@/lib/auth";
+import { requireSession, withSalesManagerAccess } from "@/lib/auth";
+import { canAccessOrderSales } from "@/lib/sales-team";
 import { apiError, handleApiError } from "@/lib/api";
 import { generateShareToken } from "@/lib/share-token";
 
@@ -9,12 +10,12 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await requireSession(["ADMIN", "SALES", "OPERATIONS"]);
+    const session = await requireSession(withSalesManagerAccess(["ADMIN", "SALES", "OPERATIONS"]));
     const { id } = await params;
 
     const order = await prisma.order.findUnique({ where: { id } });
     if (!order || order.deletedAt) return apiError("订单不存在", 404);
-    if (session.role === "SALES" && order.salesId !== session.id) {
+    if (!(await canAccessOrderSales(session, order.salesId))) {
       return apiError("无权限", 403);
     }
 

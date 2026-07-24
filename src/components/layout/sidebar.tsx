@@ -20,7 +20,7 @@ export function Sidebar({ user }: { user: SessionUser }) {
     if (item.premiumOnly && !isPremiumActive) return false;
     if (item.hideInPremium && isPremiumActive) {
       // 高级版：销售仍保留独立「产品展示」入口
-      if (item.href === "/catalog" && user.role === "SALES") return true;
+      if (item.href === "/catalog" && (user.role === "SALES" || user.role === "SALES_MANAGER")) return true;
       return false;
     }
     return true;

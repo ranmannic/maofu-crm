@@ -15,6 +15,8 @@ import { useEdition } from "@/components/edition/edition-provider";
 import { ADMIN_DASHBOARD_DATA_VISIBLE_KEY } from "@/lib/constants";
 import { APP_VERSION } from "@/lib/app-version";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { TeamPerformanceSection } from "@/components/dashboard/team-performance-section";
+import { hasOrgWidePerformanceStats } from "@/lib/sales-role";
 import type { SessionUser } from "@/lib/auth-types";
 
 interface RefundOrderRow {
@@ -110,10 +112,34 @@ interface StatsData {
     coversFixedCost: boolean;
     periodLabel: string;
   };
+  teamPerformance?: {
+    teams: {
+      managerId: string | null;
+      teamName: string;
+      managerName: string | null;
+      memberCount: number;
+      orderCount: number;
+      totalAmount: number;
+      paidAmount: number;
+      unpaidAmount: number;
+    }[];
+    myTeam: {
+      managerId: string | null;
+      teamName: string;
+      managerName: string | null;
+      memberCount: number;
+      orderCount: number;
+      totalAmount: number;
+      paidAmount: number;
+      unpaidAmount: number;
+    } | null;
+  };
 }
 
 export function DashboardPage({ user }: { user: SessionUser }) {
   const isAdmin = user.role === "ADMIN";
+  const isManager = user.role === "SALES_MANAGER";
+  const isWideStats = hasOrgWidePerformanceStats(user.role);
   const { isPremiumActive } = useEdition();
   const [period, setPeriod] = useState("month");
   const [customStart, setCustomStart] = useState("");
@@ -202,7 +228,7 @@ export function DashboardPage({ user }: { user: SessionUser }) {
   const paidPerformanceOrders = stats?.performanceDetails?.paidOrders ?? [];
   const unpaidPerformanceOrders = stats?.performanceDetails?.unpaidOrders ?? [];
   const performanceEvents = stats?.performanceDetails?.events ?? [];
-  const showSalesInDetail = stats?.performanceDetails?.showSales ?? isAdmin;
+  const showSalesInDetail = stats?.performanceDetails?.showSales ?? isWideStats;
 
   return (
     <div className="space-y-6">
@@ -212,7 +238,11 @@ export function DashboardPage({ user }: { user: SessionUser }) {
             数据概览
           </h1>
           <p className="text-muted text-sm mt-1 font-serif">
-            {isAdmin ? "全站经营数据与同比分析" : "我的客户与业绩分析"}
+            {isManager
+              ? "小队经营数据与同比分析"
+              : isWideStats
+                ? "全站经营数据与同比分析"
+                : "我的客户与业绩分析"}
           </p>
         </div>
         <div className="page-header-actions">
@@ -239,13 +269,13 @@ export function DashboardPage({ user }: { user: SessionUser }) {
               )}
             </Button>
           )}
-          {isAdmin && stats?.salesUsers && (
+          {(isAdmin || isManager) && stats?.salesUsers && (
             <Select
               value={salesId}
               onChange={(e) => setSalesId(e.target.value)}
               className="w-36"
             >
-              <option value="">全部销售</option>
+              <option value="">{isManager ? "全小队" : "全部销售"}</option>
               {stats.salesUsers.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name}
@@ -258,14 +288,14 @@ export function DashboardPage({ user }: { user: SessionUser }) {
             onChange={(e) => handlePeriodChange(e.target.value)}
             className="w-28"
           >
-            {isAdmin && <option value="day">今日</option>}
+            {(isAdmin || isManager) && <option value="day">今日</option>}
             <option value="month">本月</option>
-            {isAdmin && <option value="year">本年</option>}
-            {isAdmin && isPremiumActive && (
+            {(isAdmin || isManager) && <option value="year">本年</option>}
+            {(isAdmin || isManager) && isPremiumActive && (
               <option value="custom">自定义</option>
             )}
           </Select>
-          {isAdmin && isPremiumActive && period === "custom" && (
+          {(isAdmin || isManager) && isPremiumActive && period === "custom" && (
             <div className="flex flex-wrap items-center gap-2">
               <Input
                 type="date"
@@ -368,6 +398,14 @@ export function DashboardPage({ user }: { user: SessionUser }) {
             )}
           </div>
 
+          {stats.teamPerformance && (
+            <TeamPerformanceSection
+              teams={stats.teamPerformance.teams}
+              hidden={hidden}
+              highlightManagerId={isManager ? user.id : undefined}
+            />
+          )}
+
           {isAdmin &&
             isPremiumActive &&
             stats.fixedCostStats &&
@@ -400,7 +438,7 @@ export function DashboardPage({ user }: { user: SessionUser }) {
             </div>
           </div>
 
-          {isAdmin && stats.categoryPerformanceStats && (
+          {isWideStats && stats.categoryPerformanceStats && (
             <CategoryPerformanceSection
               data={stats.categoryPerformanceStats}
               hidden={hidden}
@@ -473,7 +511,7 @@ export function DashboardPage({ user }: { user: SessionUser }) {
             </CardContent>
           </Card>
 
-          {isAdmin && stats.salesStats && (
+          {isWideStats && stats.salesStats && (
             <Card>
               <CardHeader>
                 <CardTitle className="font-serif">销售业绩</CardTitle>
@@ -487,7 +525,7 @@ export function DashboardPage({ user }: { user: SessionUser }) {
                       <th className="pb-3">订单数</th>
                       <th className="pb-3">业绩金额</th>
                       <th className="pb-3">已收款</th>
-                      <th className="pb-3">毛利</th>
+                      {isAdmin && <th className="pb-3">毛利</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -501,9 +539,11 @@ export function DashboardPage({ user }: { user: SessionUser }) {
                         <td className="py-3">
                           {hidden ? "****" : formatCurrency(row.paidAmount)}
                         </td>
-                        <td className="py-3 text-wine font-medium">
-                          {hidden ? "****" : formatCurrency(row.profit)}
-                        </td>
+                        {isAdmin && (
+                          <td className="py-3 text-wine font-medium">
+                            {hidden ? "****" : formatCurrency(row.profit)}
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>

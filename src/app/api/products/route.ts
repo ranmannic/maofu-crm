@@ -8,6 +8,7 @@ import {
   serializeProductForAdmin,
   serializeProductForSales,
 } from "@/lib/product-serializers";
+import { activeProductWhere, activeProductSpecWhere, activeSpecsOrderBy } from "@/lib/product-query";
 
 const productSchema = z.object({
   name: z.string().min(1, "产品名称不能为空"),
@@ -30,9 +31,11 @@ export async function GET(request: NextRequest) {
   try {
     const session = await requireSession();
     const products = await prisma.product.findMany({
+      where: activeProductWhere,
       include: {
         specs: {
-          orderBy: { createdAt: "asc" },
+          where: activeProductSpecWhere,
+          orderBy: activeSpecsOrderBy,
           include: {
             stockBasisLines: { select: { id: true }, take: 1 },
           },

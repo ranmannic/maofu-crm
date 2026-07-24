@@ -9,6 +9,7 @@ export interface SessionUser {
 
 export const ROLE_LABELS: Record<Role, string> = {
   SALES: "销售",
+  SALES_MANAGER: "销售管理",
   OPERATIONS: "职能",
   ADMIN: "管理员",
 };

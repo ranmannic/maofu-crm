@@ -5,7 +5,7 @@ import { CreditPage } from "@/components/credit/credit-page";
 export default async function CreditRoute() {
   const session = await getSession();
   if (!session) redirect("/login");
-  if (!["ADMIN", "SALES", "OPERATIONS"].includes(session.role)) {
+  if (!["ADMIN", "SALES", "SALES_MANAGER", "OPERATIONS"].includes(session.role)) {
     redirect("/orders");
   }
   return <CreditPage user={session} />;

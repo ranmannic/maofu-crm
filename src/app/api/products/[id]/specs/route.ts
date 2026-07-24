@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requireSession, PRODUCT_MANAGER_ROLES } from "@/lib/auth";
 import { apiError, handleApiError } from "@/lib/api";
 import type { SpecUnit } from "@/generated/prisma/client";
+import { isProductActive } from "@/lib/product-query";
 
 const specSchema = z.object({
   name: z.string().min(1),
@@ -28,6 +29,11 @@ export async function POST(
     await requireSession(PRODUCT_MANAGER_ROLES);
     const { id: productId } = await params;
     const data = specSchema.parse(await request.json());
+
+    const product = await prisma.product.findUnique({ where: { id: productId } });
+    if (!product || !isProductActive(product)) {
+      return apiError("产品不存在", 404);
+    }
 
     const spec = await prisma.productSpec.create({
       data: { ...data, unitType: data.unitType as SpecUnit, productId },

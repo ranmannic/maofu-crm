@@ -23,6 +23,7 @@ import {
   useRestoreListPageScroll,
 } from "@/hooks/use-saved-list-page-state";
 import type { SessionUser } from "@/lib/auth-types";
+import { isSalesFieldRole } from "@/lib/sales-role";
 import type { SpecUnit } from "@/generated/prisma/client";
 
 interface AuditLog {
@@ -112,15 +113,6 @@ interface Product {
 }
 interface OpsUser { id: string; name: string }
 
-function paymentNeedsReconcile(
-  order: Pick<Order, "paymentStatus" | "paidAmount">,
-  newStatus: "UNPAID" | "PARTIAL" | "PAID"
-) {
-  if (newStatus === "PARTIAL") return true;
-  if (newStatus === "PAID" && order.paymentStatus === "PARTIAL") return true;
-  return false;
-}
-
 function getPaymentBadge(order: Order) {
   if (order.paymentStatus === "PAID" || order.isPaid) {
     return { variant: "success" as const, label: "已收" };
@@ -129,6 +121,47 @@ function getPaymentBadge(order: Order) {
     return { variant: "wine" as const, label: "部分收" };
   }
   return { variant: "warning" as const, label: "未收" };
+}
+
+function OrderListFinancialCell({
+  order,
+  isAdmin,
+}: {
+  order: Order;
+  isAdmin: boolean;
+}) {
+  if (!isAdmin) {
+    return (
+      <td className="py-3 pl-3 text-right tabular-nums whitespace-nowrap font-medium">
+        {formatCurrency(order.totalAmount)}
+      </td>
+    );
+  }
+
+  const hasProfit = order.profit !== undefined;
+  const hasMargin = typeof order.profitMargin === "number";
+
+  return (
+    <td className="py-3 pl-4 text-right align-top min-w-[8.5rem] lg:min-w-[9.5rem]">
+      <div className="tabular-nums whitespace-nowrap font-medium text-[15px] leading-tight">
+        {formatCurrency(order.totalAmount)}
+      </div>
+      {(hasProfit || hasMargin) && (
+        <div className="mt-1.5 flex flex-col items-end gap-0.5 text-xs leading-snug">
+          {hasProfit && (
+            <span className="text-wine tabular-nums whitespace-nowrap">
+              毛利 {formatCurrency(order.profit!)}
+            </span>
+          )}
+          {hasMargin && (
+            <span className="text-muted tabular-nums whitespace-nowrap">
+              毛利率 {order.profitMargin!.toFixed(1)}%
+            </span>
+          )}
+        </div>
+      )}
+    </td>
+  );
 }
 
 const ORDERS_ROUTE_KEY = "/orders";
@@ -178,8 +211,11 @@ export function OrdersPage({
   const createSuccessTarget =
     returnTo || `/customers/${initialCustomerId || ""}`;
   const createInitialized = useRef(false);
-  const canCreate = ["SALES", "ADMIN"].includes(user.role);
-  const canDelete = ["SALES", "ADMIN"].includes(user.role);
+  const canCreate =
+    user.role === "SALES" ||
+    user.role === "SALES_MANAGER" ||
+    user.role === "ADMIN";
+  const canDelete = user.role === "SALES" || user.role === "ADMIN";
   const canManageOps = ["OPERATIONS", "ADMIN"].includes(user.role);
   const isAdmin = user.role === "ADMIN";
   const canExportOrders = isAdmin || canManageOps;
@@ -217,7 +253,7 @@ export function OrdersPage({
     !isCreateOnly && !loading
   );
 
-  const isSales = user.role === "SALES";
+  const isSales = isSalesFieldRole(user.role);
 
   const [detailOpen, setDetailOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
@@ -609,22 +645,6 @@ export function OrdersPage({
     setVoucherModalOpen(true);
   }
 
-  function updatePaymentReconcileQty(orderItemId: string, quantity: number) {
-    if (!paymentOrder) return;
-    const nextQty = { ...reconcileQty, [orderItemId]: quantity };
-    setReconcileQty(nextQty);
-    if (paymentForm.paymentStatus === "PARTIAL") {
-      setPaymentForm((prev) => ({
-        ...prev,
-        paidAmount: calcReconcilePaidAmount(
-          paymentOrder.items,
-          paymentOrder.paidAmount,
-          nextQty
-        ),
-      }));
-    }
-  }
-
   function updateCreateReconcileQty(itemIndex: number, quantity: number) {
     const nextQty = { ...createReconcileQty, [itemIndex]: quantity };
     setCreateReconcileQty(nextQty);
@@ -710,18 +730,8 @@ export function OrdersPage({
       },
     };
 
-    const needsReconcile = paymentNeedsReconcile(
-      paymentOrder,
-      paymentForm.paymentStatus
-    );
-    if (needsReconcile && paymentForm.paymentStatus !== "UNPAID") {
-      body.reconcileItems = Object.entries(reconcileQty)
-        .filter(([, q]) => q > 0)
-        .map(([orderItemId, quantity]) => ({ orderItemId, quantity }));
-    }
-
-    if (paymentForm.paidAmount <= 0 && Array.isArray(body.reconcileItems) && body.reconcileItems.length > 0) {
-      setPaymentError("未付款时不可核销产品数量");
+    if (paymentForm.paidAmount <= 0 && paymentForm.paymentStatus !== "UNPAID") {
+      setPaymentError("请填写已收金额");
       setSaving(false);
       return;
     }
@@ -986,13 +996,22 @@ export function OrdersPage({
             <dd className="min-w-0 flex-1 font-medium">{formatCurrency(o.totalAmount)}</dd>
           </div>
           {isAdmin && (
-            <div className="flex gap-2">
-              <dt className="shrink-0 text-muted w-14">毛利</dt>
-              <dd className="min-w-0 flex-1 text-wine">
-                {o.profit !== undefined ? formatCurrency(o.profit) : "-"}
-                {typeof o.profitMargin === "number" ? ` (${o.profitMargin.toFixed(1)}%)` : ""}
-              </dd>
-            </div>
+            <>
+              <div className="flex gap-2">
+                <dt className="shrink-0 text-muted w-14">毛利</dt>
+                <dd className="min-w-0 flex-1 text-wine tabular-nums">
+                  {o.profit !== undefined ? formatCurrency(o.profit) : "-"}
+                </dd>
+              </div>
+              {typeof o.profitMargin === "number" && (
+                <div className="flex gap-2">
+                  <dt className="shrink-0 text-muted w-14">毛利率</dt>
+                  <dd className="min-w-0 flex-1 text-muted tabular-nums">
+                    {o.profitMargin.toFixed(1)}%
+                  </dd>
+                </div>
+              )}
+            </>
           )}
           <div className="flex gap-2 items-center">
             <dt className="shrink-0 text-muted w-14">收款</dt>
@@ -1237,26 +1256,26 @@ export function OrdersPage({
                 {orders.map((o) => renderOrderMobileCard(o))}
               </div>
               <div className="hidden md:block table-scroll">
-                <table className="w-full text-sm ink-table">
+                <table className="w-full text-sm ink-table min-w-[880px] lg:min-w-[960px]">
                   <thead>
                     <tr className="border-b border-border text-left text-muted">
-                      <th className="pb-3">订单号</th>
-                      <th className="pb-3">客户</th>
-                      <th className="pb-3">产品</th>
-                      <th className="pb-3">销售</th>
-                      <th className="pb-3">总金额</th>
-                      {isAdmin && <th className="pb-3">毛利</th>}
-                      {isAdmin && <th className="pb-3">毛利率</th>}
-                      <th className="pb-3">收款</th>
-                      <th className="pb-3">发货</th>
-                      <th className="pb-3">下单时间</th>
-                      <th className="pb-3">操作</th>
+                      <th className="pb-3 pr-2 w-[11%]">订单号</th>
+                      <th className="pb-3 pr-2 w-[10%]">客户</th>
+                      <th className="pb-3 pr-2 min-w-[120px]">产品</th>
+                      <th className="pb-3 pr-2 w-[8%]">销售</th>
+                      <th className="pb-3 pl-3 text-right whitespace-nowrap">
+                        {isAdmin ? "金额 / 毛利" : "总金额"}
+                      </th>
+                      <th className="pb-3 pl-4 w-[12%]">收款</th>
+                      <th className="pb-3 w-[7%]">发货</th>
+                      <th className="pb-3 whitespace-nowrap w-[11%]">下单时间</th>
+                      <th className="pb-3 w-[14%]">操作</th>
                     </tr>
                   </thead>
                   <tbody>
                     {orders.map((o) => (
                       <tr key={o.id} className={`border-b border-border/40 ${o.isDeleted ? "opacity-60" : ""}`}>
-                        <td className="py-3 font-mono text-xs">
+                        <td className="py-3 pr-2 font-mono text-xs align-top">
                           <span className="inline-flex items-center gap-1.5 flex-wrap">
                             {o.orderNo}
                             {renderNotesBadge(o)}
@@ -1265,17 +1284,11 @@ export function OrdersPage({
                             <Badge variant="warning" className="ml-1">已删除</Badge>
                           )}
                         </td>
-                        <td className="py-3">{o.customerName}</td>
-                        <td className="py-3 text-xs max-w-[180px] truncate" title={o.itemsSummary}>{o.itemsSummary}</td>
-                        <td className="py-3">{o.sales.name}</td>
-                        <td className="py-3 font-medium">{formatCurrency(o.totalAmount)}</td>
-                        {isAdmin && (
-                          <td className="py-3 text-wine">{o.profit !== undefined ? formatCurrency(o.profit) : "-"}</td>
-                        )}
-                        {isAdmin && (
-                          <td className="py-3 text-wine">{typeof o.profitMargin === "number" ? `${o.profitMargin.toFixed(1)}%` : "-"}</td>
-                        )}
-                        <td className="py-3">
+                        <td className="py-3 pr-2 align-top">{o.customerName}</td>
+                        <td className="py-3 pr-2 text-xs max-w-[200px] truncate align-top" title={o.itemsSummary}>{o.itemsSummary}</td>
+                        <td className="py-3 pr-2 align-top">{o.sales.name}</td>
+                        <OrderListFinancialCell order={o} isAdmin={isAdmin} />
+                        <td className="py-3 pl-4 align-top">
                           {(() => {
                             const badge = getPaymentBadge(o);
                             return (
@@ -1288,13 +1301,13 @@ export function OrdersPage({
                             );
                           })()}
                         </td>
-                        <td className="py-3">
+                        <td className="py-3 align-top">
                           <Badge variant={o.isShipped ? "success" : "default"}>
                             {o.isShipped ? "已发" : "未发"}
                           </Badge>
                         </td>
-                        <td className="py-3">{formatDate(o.orderedAt)}</td>
-                        <td className="py-3">
+                        <td className="py-3 whitespace-nowrap align-top">{formatDate(o.orderedAt)}</td>
+                        <td className="py-3 align-top">
                           <div className="flex flex-wrap items-center gap-2">
                             {renderOrderActions(o)}
                           </div>
@@ -1947,7 +1960,6 @@ export function OrdersPage({
                   value={paymentForm.paymentStatus}
                   onChange={(e) => {
                     const status = e.target.value as "UNPAID" | "PARTIAL" | "PAID";
-                    const productsDone = allProductsFullyReconciled(paymentOrder.creditLines);
                     setPaymentForm({
                       ...paymentForm,
                       paymentStatus: status,
@@ -1956,13 +1968,7 @@ export function OrdersPage({
                           ? paymentOrder.totalAmount
                           : status === "UNPAID"
                             ? 0
-                            : productsDone
-                              ? paymentOrder.paidAmount
-                              : calcReconcilePaidAmount(
-                                  paymentOrder.items,
-                                  paymentOrder.paidAmount,
-                                  reconcileQty
-                                ),
+                            : paymentOrder.paidAmount,
                     });
                   }}
                 >
@@ -1988,8 +1994,7 @@ export function OrdersPage({
                 />
                 {paymentForm.paymentStatus === "PARTIAL" && (
                   <p className="text-xs text-muted mt-1">
-                    根据本次核销数量自动累加（含历史已收{" "}
-                    {formatCurrency(paymentOrder.paidAmount)}）
+                    仅登记收款金额；产品与数量核销请在「账期核销」中操作。
                   </p>
                 )}
               </div>
@@ -2006,70 +2011,11 @@ export function OrdersPage({
                 </div>
               )}
             </div>
-            {paymentNeedsReconcile(paymentOrder, paymentForm.paymentStatus) &&
-              paymentForm.paymentStatus !== "UNPAID" &&
-              !allProductsFullyReconciled(paymentOrder.creditLines) && (
-                <div>
-                  <Label>核销产品数量 *</Label>
-                  <p className="text-xs text-muted mb-2">
-                    部分付款或账期补款结清需填写本次核销数量
-                  </p>
-                  <div className="space-y-3 border border-border rounded-sm p-3">
-                    {(paymentOrder.items ?? []).map((item) => {
-                      const line = paymentOrder.creditLines?.find(
-                        (l) => l.orderItemId === item.id
-                      );
-                      const maxQty = line?.unreconciledQty ?? item.quantity;
-                      return (
-                        <div
-                          key={item.id}
-                          className="flex flex-col gap-2 border-b border-border/40 pb-3 last:border-0 last:pb-0 sm:flex-row sm:items-center sm:gap-3"
-                        >
-                          <div className="min-w-0 flex-1 text-sm leading-snug">
-                            {item.productName} · {item.specName}
-                            {item.isGift && (
-                              <Badge variant="wine" className="ml-1 text-[10px] px-1 py-0">
-                                赠品
-                              </Badge>
-                            )}
-                            <span className="block text-xs text-muted mt-0.5 sm:inline sm:mt-0 sm:ml-1">
-                              可核销 {maxQty}
-                              {SPEC_UNIT_LABELS[item.unitType]}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
-                            <span className="text-xs text-muted whitespace-nowrap">数量</span>
-                            <QtyInput
-                              min={0}
-                              max={maxQty}
-                              className="input-compact"
-                              disabled={maxQty <= 0}
-                              value={reconcileQty[item.id] ?? 0}
-                              onChange={(n) => updatePaymentReconcileQty(item.id, n)}
-                            />
-                            <span className="text-xs text-muted">
-                              {SPEC_UNIT_LABELS[item.unitType]}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            {allProductsFullyReconciled(paymentOrder.creditLines) &&
-              paymentForm.paymentStatus !== "UNPAID" && (
-                <p className="text-xs text-muted bg-paper border border-border rounded-sm p-3">
-                  产品已全部核销，可直接设置收款金额（含运费及其它费用），无需再填核销数量。
-                </p>
-              )}
-            {paymentForm.paymentStatus === "PAID" &&
-              !paymentNeedsReconcile(paymentOrder, "PAID") &&
-              !allProductsFullyReconciled(paymentOrder.creditLines) && (
-                <p className="text-xs text-muted bg-paper border border-border rounded-sm p-3">
-                  一次性全额收款，无需填写核销产品数量。
-                </p>
-              )}
+            {paymentForm.paymentStatus !== "UNPAID" && (
+              <p className="text-xs text-muted bg-paper border border-border rounded-sm p-3">
+                订单管理不填写核销数量。若需同步核销产品，请到账期核销处理。
+              </p>
+            )}
             {paymentError && <p className="text-sm text-red-700">{paymentError}</p>}
             <OrderVouchersPanel
               orderId={paymentOrder.id}

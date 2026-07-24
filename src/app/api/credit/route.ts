@@ -10,6 +10,8 @@ import {
 } from "@/lib/performance";
 import { toBottleCount, resolveBottlesPerUnit } from "@/lib/unit-convert";
 import { SPEC_UNIT_LABELS } from "@/lib/constants";
+import { isSalesFieldRole } from "@/lib/sales-role";
+import { getOrderSalesScopeFilter } from "@/lib/sales-team";
 import type { Prisma, SpecUnit } from "@/generated/prisma/client";
 
 type CreditView = "active" | "settled";
@@ -25,16 +27,18 @@ type OrderWithRelations = Prisma.OrderGetPayload<{
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await requireSession(["ADMIN", "SALES", "OPERATIONS"]);
+    const session = await requireSession(["ADMIN", "SALES", "SALES_MANAGER", "OPERATIONS"]);
     const { searchParams } = new URL(request.url);
     const customerQ = searchParams.get("customer")?.trim();
     const orderNoQ = searchParams.get("orderNo")?.trim();
     const view = (searchParams.get("view") || "active") as CreditView;
 
     const salesScope =
-      session.role === "SALES"
-        ? session.id
-        : searchParams.get("salesId") || undefined;
+      session.role === "ADMIN" || session.role === "OPERATIONS"
+        ? searchParams.get("salesId") || undefined
+        : isSalesFieldRole(session.role)
+          ? await getOrderSalesScopeFilter(session)
+          : undefined;
 
     const agingBucket = (searchParams.get("aging") || "all") as CreditAgingBucket;
     const validAging = new Set<CreditAgingBucket>([
@@ -47,9 +51,15 @@ export async function GET(request: NextRequest) {
     const appliedAging = validAging.has(agingBucket) ? agingBucket : "all";
 
     if (view === "active") {
-      await syncEligibleCreditOrders(salesScope);
       try {
-        await syncPerformanceData(salesScope);
+        await syncEligibleCreditOrders(salesScope);
+      } catch (syncErr) {
+        console.error("[credit] syncEligibleCreditOrders", syncErr);
+      }
+      try {
+        const syncId =
+          typeof salesScope === "string" ? salesScope : undefined;
+        await syncPerformanceData(syncId);
       } catch (error) {
         console.error("[credit] syncPerformanceData", error);
       }
@@ -197,7 +207,7 @@ export async function GET(request: NextRequest) {
       customers,
       canEdit: ["OPERATIONS", "ADMIN"].includes(session.role),
       canReview: ["OPERATIONS", "ADMIN"].includes(session.role),
-      canSubmitReconciliation: session.role === "SALES",
+      canSubmitReconciliation: isSalesFieldRole(session.role),
     });
   } catch (error) {
     return handleApiError(error);

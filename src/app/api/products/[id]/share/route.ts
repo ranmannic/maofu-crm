@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireSession } from "@/lib/auth";
+import { requireSession, withSalesManagerAccess } from "@/lib/auth";
 import { apiError, handleApiError } from "@/lib/api";
 import { generateShareToken } from "@/lib/share-token";
 
@@ -9,7 +9,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    await requireSession(["ADMIN", "SALES"]);
+    await requireSession(withSalesManagerAccess(["ADMIN", "SALES"]));
     const { id } = await params;
     const product = await prisma.product.findUnique({ where: { id } });
     if (!product) return apiError("产品不存在", 404);

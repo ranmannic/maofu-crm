@@ -55,9 +55,9 @@ export async function POST(request: NextRequest) {
 
     const product = await prisma.product.findUnique({
       where: { id: body.productId },
-      select: { id: true, name: true },
+      select: { id: true, name: true, deletedAt: true },
     });
-    if (!product) return apiError("产品不存在", 404);
+    if (!product || product.deletedAt) return apiError("产品不存在", 404);
 
     const existing = await prisma.wineStock.findUnique({
       where: {

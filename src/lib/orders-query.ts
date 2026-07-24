@@ -60,7 +60,7 @@ export function buildOrderListWhere(
     ];
   }
 
-  if (filters.sales && session.role !== "SALES") {
+  if (filters.sales && session.role !== "SALES" && session.role !== "SALES_MANAGER") {
     where.sales = {
       OR: [
         { name: { contains: filters.sales } },

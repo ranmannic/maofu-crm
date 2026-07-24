@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { apiError, handleApiError } from "@/lib/api";
 import { serializeProductForPublicShare } from "@/lib/product-serializers";
 import { resolveProductMediaPath } from "@/lib/product-media";
+import { activeSpecsInclude, isProductActive } from "@/lib/product-query";
 import fs from "fs/promises";
 
 export async function GET(
@@ -14,11 +15,11 @@ export async function GET(
     const product = await prisma.product.findUnique({
       where: { shareToken: token },
       include: {
-        specs: { orderBy: { createdAt: "asc" } },
+        specs: activeSpecsInclude(),
         images: { orderBy: { sortOrder: "asc" } },
       },
     });
-    if (!product) return apiError("分享链接无效或已失效", 404);
+    if (!product || !isProductActive(product)) return apiError("分享链接无效或已失效", 404);
     return NextResponse.json(serializeProductForPublicShare(product, token));
   } catch (error) {
     return handleApiError(error);

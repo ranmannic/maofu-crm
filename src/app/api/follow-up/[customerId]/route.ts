@@ -5,6 +5,7 @@ import { requireSession } from "@/lib/auth";
 import { apiError, handleApiError } from "@/lib/api";
 import { serializeCustomer } from "@/lib/serializers";
 import type { SessionUser } from "@/lib/auth-types";
+import { canReadCustomerRecord, getManagerContactVisibility } from "@/lib/sales-team";
 import { PAID_ORDER_FILTER } from "@/lib/customer-status";
 import {
   getChurnLevel,
@@ -16,10 +17,7 @@ import {
   canAbandonCustomer,
 } from "@/lib/follow-up";
 
-async function loadCustomer(
-  customerId: string,
-  session: { role: string; id: string }
-) {
+async function loadCustomer(customerId: string, session: SessionUser) {
   const customer = await prisma.customer.findUnique({
     where: { id: customerId },
     include: {
@@ -52,18 +50,19 @@ async function loadCustomer(
   });
 
   if (!customer || customer.deletedAt) return null;
-  if (session.role === "SALES" && customer.salesId !== session.id) return null;
+  if (!(await canReadCustomerRecord(session, customer))) return null;
   return customer;
 }
 
 function mapProfile(
   customer: NonNullable<Awaited<ReturnType<typeof loadCustomer>>>,
-  session: SessionUser
+  session: SessionUser,
+  managerCanViewContact?: boolean
 ) {
   const lastOrderAt = customer.orders[0]?.orderedAt ?? null;
   const segment = getCustomerSegment(customer.customerStatus, lastOrderAt);
   const latest = customer.followUpRecords[0] ?? null;
-  const serialized = serializeCustomer(customer, session);
+  const serialized = serializeCustomer(customer, session, { managerCanViewContact });
 
   return {
     id: customer.id,
@@ -100,11 +99,12 @@ export async function GET(
   { params }: { params: Promise<{ customerId: string }> }
 ) {
   try {
-    const session = await requireSession(["ADMIN", "SALES"]);
+    const session = await requireSession(["ADMIN", "SALES", "SALES_MANAGER"]);
     const { customerId } = await params;
     const customer = await loadCustomer(customerId, session);
     if (!customer) return apiError("客户不存在", 404);
-    return NextResponse.json(mapProfile(customer, session));
+    const managerCanViewContact = await getManagerContactVisibility(session);
+    return NextResponse.json(mapProfile(customer, session, managerCanViewContact));
   } catch (error) {
     return handleApiError(error);
   }
@@ -132,6 +132,9 @@ export async function PATCH(
 ) {
   try {
     const session = await requireSession(["ADMIN", "SALES"]);
+    if (session.role === "SALES_MANAGER") {
+      return apiError("销售管理仅可查看跟进", 403);
+    }
     const { customerId } = await params;
     const customer = await loadCustomer(customerId, session);
     if (!customer) return apiError("客户不存在", 404);
@@ -192,6 +195,9 @@ export async function POST(
 ) {
   try {
     const session = await requireSession(["ADMIN", "SALES"]);
+    if (session.role === "SALES_MANAGER") {
+      return apiError("销售管理仅可查看跟进", 403);
+    }
     const { customerId } = await params;
     const customer = await loadCustomer(customerId, session);
     if (!customer) return apiError("客户不存在", 404);

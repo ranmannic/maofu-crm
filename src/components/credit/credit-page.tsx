@@ -9,8 +9,9 @@ import { Modal, ModalFooter } from "@/components/ui/modal";
 import { Input, Label, Select, Textarea, QtyInput } from "@/components/ui/input";
 import { FilterField } from "@/components/ui/filter-field";
 import { formatCurrency, formatDate } from "@/lib/utils";
-import { calcReconcilePaidAmount, allProductsFullyReconciled } from "@/lib/reconcile-ui";
+import { calcReconcilePaidAmount, allProductsFullyReconciled, isCreditReconcilePaymentMismatch, RECONCILE_PAYMENT_MISMATCH_HINT } from "@/lib/reconcile-ui";
 import { OrderVouchersPanel } from "@/components/orders/order-vouchers-panel";
+import { isSalesFieldRole } from "@/lib/sales-role";
 import type { SessionUser } from "@/lib/auth-types";
 
 interface CreditItem {
@@ -50,6 +51,18 @@ const REVIEW_STATUS_LABELS: Record<ReconciliationRecord["reviewStatus"], string>
   APPROVED: "已通过",
   REJECTED: "已驳回",
 };
+
+function orderPaymentReconcileMismatch(order: CreditOrder) {
+  return isCreditReconcilePaymentMismatch(
+    order.totalAmount,
+    order.paidAmount,
+    order.items.map((i) => ({
+      unitPrice: i.unitPrice,
+      isGift: i.isGift,
+      unreconciledQty: i.unreconciledQty,
+    }))
+  );
+}
 
 function orderHasPendingReview(order: CreditOrder) {
   return (order.reconciliationRecords ?? []).some(
@@ -156,7 +169,7 @@ export function CreditPage({ user }: { user: SessionUser }) {
     ["OPERATIONS", "ADMIN"].includes(user.role)
   );
   const [canSubmitReconciliation, setCanSubmitReconciliation] = useState(
-    user.role === "SALES"
+    isSalesFieldRole(user.role)
   );
   const [stats, setStats] = useState<CreditStats | null>(null);
   const [agingStats, setAgingStats] = useState<CreditAgingStats | null>(null);
@@ -191,6 +204,7 @@ export function CreditPage({ user }: { user: SessionUser }) {
   });
   const [badDebtQty, setBadDebtQty] = useState<Record<string, number>>({});
   const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
@@ -204,11 +218,18 @@ export function CreditPage({ user }: { user: SessionUser }) {
       const data = await res.json();
       setStats(data.stats ?? null);
       setAgingStats(data.agingStats ?? null);
-      setCustomers(data.customers);
+      setCustomers(Array.isArray(data.customers) ? data.customers : []);
       setSettledOrderCount(data.settledOrderCount ?? 0);
       setCanEdit(data.canEdit ?? false);
       setCanReview(data.canReview ?? false);
       setCanSubmitReconciliation(data.canSubmitReconciliation ?? false);
+      setLoadError("");
+    } else {
+      setCustomers([]);
+      setStats(null);
+      setAgingStats(null);
+      const data = await res.json().catch(() => ({}));
+      setLoadError(data.error || "账期数据加载失败");
     }
     setLoading(false);
   }, [appliedQ, appliedOrderNo, appliedView, appliedAging]);
@@ -257,7 +278,8 @@ export function CreditPage({ user }: { user: SessionUser }) {
   function updateReconcileQty(order: CreditOrder, itemId: string, quantity: number) {
     const nextQty = { ...reconcileQty, [itemId]: quantity };
     setReconcileQty(nextQty);
-    if (paymentForm.paymentStatus === "PARTIAL") {
+    const mismatch = orderPaymentReconcileMismatch(order);
+    if (paymentForm.paymentStatus === "PARTIAL" && !mismatch) {
       setPaymentForm((prev) => ({
         ...prev,
         paidAmount: calcReconcilePaidAmount(
@@ -405,6 +427,11 @@ export function CreditPage({ user }: { user: SessionUser }) {
 
   return (
     <div className="space-y-5">
+      {loadError && !loading && (
+        <div className="rounded-sm border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          {loadError}
+        </div>
+      )}
       <div className="hidden lg:block">
         <h1 className="text-2xl font-serif font-bold">账期核销管理</h1>
         <p className="text-muted text-sm mt-1 font-serif">
@@ -797,6 +824,12 @@ export function CreditPage({ user }: { user: SessionUser }) {
       >
         {selectedOrder && (
           <div className="space-y-4">
+            {orderPaymentReconcileMismatch(selectedOrder) && (
+              <div className="flex gap-2 rounded-sm border border-amber-600/40 bg-amber-50 text-amber-950 px-3 py-2 text-sm">
+                <AlertTriangle className="size-4 shrink-0 mt-0.5" />
+                <span>{RECONCILE_PAYMENT_MISMATCH_HINT}</span>
+              </div>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <Label>付款状态</Label>
@@ -804,7 +837,7 @@ export function CreditPage({ user }: { user: SessionUser }) {
                   value={paymentForm.paymentStatus}
                   onChange={(e) => {
                     const status = e.target.value as "UNPAID" | "PARTIAL" | "PAID";
-                    const productsDone = allProductsFullyReconciled(selectedOrder.items);
+                    const mismatch = orderPaymentReconcileMismatch(selectedOrder);
                     if (status === "PAID") {
                       setPaymentForm({
                         ...paymentForm,
@@ -819,17 +852,19 @@ export function CreditPage({ user }: { user: SessionUser }) {
                       paidAmount:
                         status === "UNPAID"
                           ? 0
-                          : productsDone
+                          : mismatch
                             ? selectedOrder.paidAmount
-                            : calcReconcilePaidAmount(
-                                selectedOrder.items.map((i) => ({
-                                  id: i.id,
-                                  unitPrice: i.unitPrice,
-                                  isGift: i.isGift,
-                                })),
-                                selectedOrder.paidAmount,
-                                reconcileQty
-                              ),
+                            : allProductsFullyReconciled(selectedOrder.items)
+                              ? selectedOrder.paidAmount
+                              : calcReconcilePaidAmount(
+                                  selectedOrder.items.map((i) => ({
+                                    id: i.id,
+                                    unitPrice: i.unitPrice,
+                                    isGift: i.isGift,
+                                  })),
+                                  selectedOrder.paidAmount,
+                                  reconcileQty
+                                ),
                     });
                   }}
                 >
@@ -854,8 +889,9 @@ export function CreditPage({ user }: { user: SessionUser }) {
                 />
                 {paymentForm.paymentStatus === "PARTIAL" && (
                   <p className="text-xs text-muted mt-1">
-                    根据本次核销数量自动累加（含历史已收{" "}
-                    {formatCurrency(selectedOrder.paidAmount)}）
+                    {orderPaymentReconcileMismatch(selectedOrder)
+                      ? "请自行填写本次已收金额（含历史已收基准）。"
+                      : `根据本次核销数量自动累加（含历史已收 ${formatCurrency(selectedOrder.paidAmount)}）`}
                   </p>
                 )}
               </div>

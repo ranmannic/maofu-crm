@@ -4,6 +4,10 @@ import { prisma } from "@/lib/prisma";
 import { requireSession, PRODUCT_MANAGER_ROLES, canManageProducts } from "@/lib/auth";
 import { apiError, handleApiError } from "@/lib/api";
 import { serializeProductForAdmin } from "@/lib/product-serializers";
+import {
+  activeSpecsInclude,
+  isProductActive,
+} from "@/lib/product-query";
 
 const updateSchema = z.object({
   name: z.string().min(1).optional(),
@@ -24,11 +28,11 @@ export async function GET(
     const product = await prisma.product.findUnique({
       where: { id },
       include: {
-        specs: { orderBy: { createdAt: "asc" } },
+        specs: activeSpecsInclude(),
         images: { orderBy: { sortOrder: "asc" } },
       },
     });
-    if (!product) return apiError("产品不存在", 404);
+    if (!product || !isProductActive(product)) return apiError("产品不存在", 404);
     if (canManageProducts(session.role)) {
       return NextResponse.json(serializeProductForAdmin(product));
     }
@@ -48,11 +52,16 @@ export async function PATCH(
     const { id } = await params;
     const data = updateSchema.parse(await request.json());
 
+    const existing = await prisma.product.findUnique({ where: { id } });
+    if (!existing || !isProductActive(existing)) {
+      return apiError("产品不存在", 404);
+    }
+
     const product = await prisma.product.update({
       where: { id },
       data,
       include: {
-        specs: true,
+        specs: activeSpecsInclude(),
         images: { orderBy: { sortOrder: "asc" } },
       },
     });
@@ -72,7 +81,23 @@ export async function DELETE(
   try {
     await requireSession(PRODUCT_MANAGER_ROLES);
     const { id } = await params;
-    await prisma.product.delete({ where: { id } });
+    const existing = await prisma.product.findUnique({ where: { id } });
+    if (!existing) return apiError("产品不存在", 404);
+    if (!isProductActive(existing)) {
+      return NextResponse.json({ success: true });
+    }
+
+    const deletedAt = new Date();
+    await prisma.$transaction([
+      prisma.productSpec.updateMany({
+        where: { productId: id, deletedAt: null },
+        data: { deletedAt },
+      }),
+      prisma.product.update({
+        where: { id },
+        data: { deletedAt },
+      }),
+    ]);
     return NextResponse.json({ success: true });
   } catch (error) {
     return handleApiError(error);

@@ -1,15 +1,17 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireSession } from "@/lib/auth";
+import { requireSession, withSalesManagerAccess } from "@/lib/auth";
 import { handleApiError } from "@/lib/api";
 import { serializeProductForSales } from "@/lib/product-serializers";
+import { activeProductWhere, activeSpecsInclude } from "@/lib/product-query";
 
 export async function GET() {
   try {
-    await requireSession(["ADMIN", "SALES", "OPERATIONS"]);
+    await requireSession(withSalesManagerAccess(["ADMIN", "SALES", "OPERATIONS"]));
     const products = await prisma.product.findMany({
+      where: activeProductWhere,
       include: {
-        specs: { orderBy: { createdAt: "asc" } },
+        specs: activeSpecsInclude(),
         images: { orderBy: { sortOrder: "asc" } },
       },
       orderBy: { createdAt: "desc" },

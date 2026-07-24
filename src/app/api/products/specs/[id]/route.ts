@@ -4,6 +4,10 @@ import { prisma } from "@/lib/prisma";
 import { requireSession, PRODUCT_MANAGER_ROLES } from "@/lib/auth";
 import { apiError, handleApiError } from "@/lib/api";
 import type { SpecUnit } from "@/generated/prisma/client";
+import {
+  isProductActive,
+  isSpecActive,
+} from "@/lib/product-query";
 
 const specUpdateSchema = z.object({
   name: z.string().min(1).optional(),
@@ -29,6 +33,18 @@ export async function PATCH(
     const { id } = await params;
     const data = specUpdateSchema.parse(await request.json());
 
+    const existing = await prisma.productSpec.findUnique({
+      where: { id },
+      include: { product: { select: { deletedAt: true } } },
+    });
+    if (
+      !existing ||
+      !isSpecActive(existing) ||
+      !isProductActive(existing.product)
+    ) {
+      return apiError("规格不存在", 404);
+    }
+
     const spec = await prisma.productSpec.update({
       where: { id },
       data: {
@@ -52,7 +68,24 @@ export async function DELETE(
   try {
     await requireSession(PRODUCT_MANAGER_ROLES);
     const { id } = await params;
-    await prisma.productSpec.delete({ where: { id } });
+    const existing = await prisma.productSpec.findUnique({
+      where: { id },
+      include: { product: { select: { deletedAt: true } } },
+    });
+    if (
+      !existing ||
+      !isProductActive(existing.product)
+    ) {
+      return apiError("规格不存在", 404);
+    }
+    if (!isSpecActive(existing)) {
+      return NextResponse.json({ success: true });
+    }
+
+    await prisma.productSpec.update({
+      where: { id },
+      data: { deletedAt: new Date() },
+    });
     return NextResponse.json({ success: true });
   } catch (error) {
     return handleApiError(error);

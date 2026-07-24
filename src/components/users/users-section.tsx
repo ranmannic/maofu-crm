@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Plus, Trash2, KeyRound } from "lucide-react";
+import { Plus, Trash2, KeyRound, UsersRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +17,9 @@ interface UserRow {
   name: string;
   role: Role;
   createdAt: string;
+  salesTeamName?: string | null;
+  canViewCustomerContact?: boolean;
+  managedSales?: { id: string; name: string }[];
   _count: {
     customers: number;
     salesOrders: number;
@@ -24,9 +27,15 @@ interface UserRow {
   };
 }
 
+interface SalesOption {
+  id: string;
+  name: string;
+}
+
 const roleTabs: { label: string; role: Role | "ALL" }[] = [
   { label: "全部", role: "ALL" },
   { label: "销售账号", role: "SALES" },
+  { label: "销售管理", role: "SALES_MANAGER" },
   { label: "职能账号", role: "OPERATIONS" },
   { label: "管理员", role: "ADMIN" },
 ];
@@ -48,6 +57,14 @@ export function UsersSection({ embedded = false }: { embedded?: boolean }) {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [teamOpen, setTeamOpen] = useState(false);
+  const [teamTarget, setTeamTarget] = useState<UserRow | null>(null);
+  const [allSales, setAllSales] = useState<SalesOption[]>([]);
+  const [teamForm, setTeamForm] = useState({
+    salesTeamName: "",
+    canViewCustomerContact: false,
+    managedSalesIds: [] as string[],
+  });
 
   async function load() {
     setLoading(true);
@@ -60,6 +77,52 @@ export function UsersSection({ embedded = false }: { embedded?: boolean }) {
   useEffect(() => {
     load();
   }, [tab]);
+
+  async function openTeamModal(user: UserRow) {
+    setTeamTarget(user);
+    setTeamForm({
+      salesTeamName: user.salesTeamName ?? "",
+      canViewCustomerContact: user.canViewCustomerContact ?? false,
+      managedSalesIds: user.managedSales?.map((s) => s.id) ?? [],
+    });
+    setError("");
+    const res = await fetch("/api/users?role=SALES");
+    if (res.ok) setAllSales(await res.json());
+    setTeamOpen(true);
+  }
+
+  async function handleTeamSave() {
+    if (!teamTarget) return;
+    setSaving(true);
+    setError("");
+    const res = await fetch(`/api/users/${teamTarget.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        salesTeamName: teamForm.salesTeamName.trim() || null,
+        canViewCustomerContact: teamForm.canViewCustomerContact,
+        managedSalesIds: teamForm.managedSalesIds,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setError(data.error || "保存失败");
+      setSaving(false);
+      return;
+    }
+    setTeamOpen(false);
+    await load();
+    setSaving(false);
+  }
+
+  function toggleManagedSales(id: string) {
+    setTeamForm((prev) => {
+      const set = new Set(prev.managedSalesIds);
+      if (set.has(id)) set.delete(id);
+      else set.add(id);
+      return { ...prev, managedSalesIds: [...set] };
+    });
+  }
 
   async function handleCreate() {
     setSaving(true);
@@ -215,6 +278,15 @@ export function UsersSection({ embedded = false }: { embedded?: boolean }) {
                       <td className="py-3">{u._count.handledOrders}</td>
                       <td className="py-3">{formatDate(u.createdAt)}</td>
                       <td className="py-3 space-x-3">
+                        {u.role === "SALES_MANAGER" && (
+                          <button
+                            onClick={() => openTeamModal(u)}
+                            className="text-wine hover:underline inline-flex items-center gap-1 text-xs"
+                          >
+                            <UsersRound className="h-3.5 w-3.5" />
+                            小队配置
+                          </button>
+                        )}
                         <button
                           onClick={() => openPasswordModal(u)}
                           className="text-wine hover:underline inline-flex items-center gap-1 text-xs"
@@ -284,6 +356,7 @@ export function UsersSection({ embedded = false }: { embedded?: boolean }) {
               }
             >
               <option value="SALES">销售</option>
+              <option value="SALES_MANAGER">销售管理</option>
               <option value="OPERATIONS">职能</option>
               <option value="ADMIN">管理员</option>
             </Select>
@@ -334,6 +407,65 @@ export function UsersSection({ embedded = false }: { embedded?: boolean }) {
           </Button>
           <Button onClick={handlePasswordUpdate} disabled={saving}>
             {saving ? "保存中..." : "确认修改"}
+          </Button>
+        </ModalFooter>
+      </Modal>
+
+      <Modal
+        open={teamOpen}
+        onClose={() => setTeamOpen(false)}
+        title={`小队配置 · ${teamTarget?.name || ""}`}
+      >
+        <div className="space-y-4 max-h-[60vh] overflow-y-auto">
+          <div>
+            <Label>小队名称</Label>
+            <Input
+              value={teamForm.salesTeamName}
+              onChange={(e) =>
+                setTeamForm({ ...teamForm, salesTeamName: e.target.value })
+              }
+              placeholder="例如：华东一队"
+            />
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={teamForm.canViewCustomerContact}
+              onChange={(e) =>
+                setTeamForm({
+                  ...teamForm,
+                  canViewCustomerContact: e.target.checked,
+                })
+              }
+            />
+            允许查看队内客户联系方式
+          </label>
+          <div>
+            <Label>管辖销售（每名销售仅可归属一个小队）</Label>
+            <div className="mt-2 space-y-2 border border-border rounded-sm p-3">
+              {allSales.map((s) => (
+                <label key={s.id} className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={teamForm.managedSalesIds.includes(s.id)}
+                    onChange={() => toggleManagedSales(s.id)}
+                  />
+                  {s.name}
+                </label>
+              ))}
+              {allSales.length === 0 && (
+                <p className="text-sm text-muted">暂无销售账号</p>
+              )}
+            </div>
+          </div>
+          {error && <p className="text-sm text-red-700">{error}</p>}
+        </div>
+        <ModalFooter>
+          <Button variant="secondary" onClick={() => setTeamOpen(false)}>
+            取消
+          </Button>
+          <Button onClick={handleTeamSave} disabled={saving}>
+            {saving ? "保存中..." : "保存"}
           </Button>
         </ModalFooter>
       </Modal>

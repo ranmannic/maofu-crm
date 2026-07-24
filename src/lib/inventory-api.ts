@@ -1,5 +1,5 @@
 import { getEditionState, isPremiumEdition } from "@/lib/edition";
-import { requireSession, PRODUCT_MANAGER_ROLES, type SessionUser } from "@/lib/auth";
+import { requireSession, PRODUCT_MANAGER_ROLES, withSalesManagerAccess, type SessionUser } from "@/lib/auth";
 import type { Role } from "@/generated/prisma/client";
 
 export async function requirePremiumInventoryManager() {
@@ -12,7 +12,7 @@ export async function requirePremiumInventoryManager() {
 }
 
 export async function requirePremiumInventoryReader() {
-  const session = await requireSession(["ADMIN", "OPERATIONS", "SALES"]);
+  const session = await requireSession(withSalesManagerAccess(["ADMIN", "OPERATIONS", "SALES"]));
   const edition = await getEditionState();
   if (!isPremiumEdition(edition)) {
     throw new Error("PREMIUM_REQUIRED");

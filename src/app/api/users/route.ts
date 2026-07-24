@@ -9,7 +9,7 @@ const userSchema = z.object({
   username: z.string().min(3, "用户名至少3个字符"),
   password: z.string().min(6, "密码至少6个字符"),
   name: z.string().min(1, "姓名不能为空"),
-  role: z.enum(["SALES", "OPERATIONS", "ADMIN"]),
+  role: z.enum(["SALES", "SALES_MANAGER", "OPERATIONS", "ADMIN"]),
 });
 
 export async function GET(request: NextRequest) {
@@ -34,6 +34,10 @@ export async function GET(request: NextRequest) {
         name: true,
         role: true,
         createdAt: true,
+        salesTeamName: true,
+        canViewCustomerContact: true,
+        managedSales: { select: { id: true, name: true } },
+        salesManager: { select: { id: true, name: true } },
         _count: {
           select: {
             customers: true,
