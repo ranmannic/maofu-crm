@@ -33,6 +33,11 @@ export async function buildTeamPerformanceStats(
     orderBy: { name: "asc" },
   });
 
+  // 尚未配置任何销售管理（小队）时，不展示小队业绩板
+  if (managers.length === 0) {
+    return { teams: [], myTeam: null };
+  }
+
   const teams: TeamPerformanceRow[] = managers.map((m) => {
     const memberIds = new Set(m.managedSales.map((s) => s.id));
     const orders = periodOrders.filter((o) => memberIds.has(o.salesId));

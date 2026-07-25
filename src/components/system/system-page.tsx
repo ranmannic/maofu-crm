@@ -1,17 +1,23 @@
 "use client";
 
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { ChannelsSection } from "@/components/channels/channels-section";
 import { UsersSection } from "@/components/users/users-section";
+import { WebsiteSettingsSection } from "@/components/site/website-settings-section";
 
 const tabs = [
+  { id: "site" as const, label: "网站设置" },
   { id: "channels" as const, label: "渠道管理" },
   { id: "users" as const, label: "账号管理" },
 ];
 
 export function SystemPage() {
-  const [tab, setTab] = useState<(typeof tabs)[number]["id"]>("channels");
+  const searchParams = useSearchParams();
+  const initialTab =
+    (searchParams.get("tab") as (typeof tabs)[number]["id"] | null) ?? "site";
+  const [tab, setTab] = useState<(typeof tabs)[number]["id"]>(initialTab);
 
   return (
     <div className="space-y-5">
@@ -19,7 +25,7 @@ export function SystemPage() {
         <div className="hidden lg:block">
           <h1 className="text-2xl font-serif font-bold">系统管理</h1>
           <p className="text-muted text-sm mt-1 font-serif">
-            渠道分类与系统账号配置
+            网站品牌、空间、渠道分类与系统账号配置
           </p>
         </div>
       </div>
@@ -42,7 +48,9 @@ export function SystemPage() {
         ))}
       </div>
 
-      {tab === "channels" ? (
+      {tab === "site" ? (
+        <WebsiteSettingsSection />
+      ) : tab === "channels" ? (
         <ChannelsSection embedded />
       ) : (
         <UsersSection embedded />

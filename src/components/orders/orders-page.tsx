@@ -123,6 +123,16 @@ function getPaymentBadge(order: Order) {
   return { variant: "warning" as const, label: "未收" };
 }
 
+function getRefundBadge(order: Order) {
+  if (order.refundStatus === "FULL") {
+    return { variant: "danger" as const, label: "全额退款" };
+  }
+  if (order.refundStatus === "PARTIAL") {
+    return { variant: "warning" as const, label: "部分退款" };
+  }
+  return null;
+}
+
 function OrderListFinancialCell({
   order,
   isAdmin,
@@ -189,6 +199,7 @@ const emptyOrderFilters = {
   isPaid: "",
   paymentStatus: "",
   isShipped: "",
+  refundStatus: "",
   showDeleted: "",
 };
 
@@ -963,6 +974,7 @@ export function OrdersPage({
 
   function renderOrderMobileCard(o: Order) {
     const badge = getPaymentBadge(o);
+    const refundBadge = getRefundBadge(o);
     return (
       <div
         key={o.id}
@@ -975,6 +987,9 @@ export function OrdersPage({
           <span className="font-mono text-xs font-semibold break-all inline-flex items-center gap-1.5 flex-wrap">
             {o.orderNo}
             {renderNotesBadge(o)}
+            {refundBadge && (
+              <Badge variant={refundBadge.variant}>{refundBadge.label}</Badge>
+            )}
           </span>
           {o.isDeleted && <Badge variant="warning">已删除</Badge>}
         </div>
@@ -1015,13 +1030,19 @@ export function OrdersPage({
           )}
           <div className="flex gap-2 items-center">
             <dt className="shrink-0 text-muted w-14">收款</dt>
-            <dd>
+            <dd className="flex flex-wrap items-center gap-1.5">
               <Badge variant={badge.variant}>
                 {badge.label}
                 {o.paymentStatus === "PARTIAL" && o.paidAmount > 0
                   ? ` ${formatCurrency(o.paidAmount)}`
                   : ""}
               </Badge>
+              {refundBadge && (
+                <Badge variant={refundBadge.variant}>
+                  {refundBadge.label}
+                  {o.refundAmount ? ` ${formatCurrency(o.refundAmount)}` : ""}
+                </Badge>
+              )}
             </dd>
           </div>
           <div className="flex gap-2 items-center">
@@ -1122,6 +1143,20 @@ export function OrdersPage({
                       setFilterDraft({ ...filterDraft, orderedEnd: e.target.value })
                     }
                   />
+                </FilterField>
+                <FilterField label="退款状态">
+                  <Select
+                    value={filterDraft.refundStatus}
+                    onChange={(e) =>
+                      setFilterDraft({ ...filterDraft, refundStatus: e.target.value })
+                    }
+                  >
+                    <option value="">全部</option>
+                    <option value="ANY">有退款</option>
+                    <option value="PARTIAL">部分退款</option>
+                    <option value="FULL">全额退款</option>
+                    <option value="NONE">无退款</option>
+                  </Select>
                 </FilterField>
                 <label className="filter-field-checkbox flex items-center gap-2 text-sm text-muted">
                   <input
@@ -1227,6 +1262,20 @@ export function OrdersPage({
                     <option value="false">未发货</option>
                   </Select>
                 </FilterField>
+                <FilterField label="退款状态">
+                  <Select
+                    value={filterDraft.refundStatus}
+                    onChange={(e) =>
+                      setFilterDraft({ ...filterDraft, refundStatus: e.target.value })
+                    }
+                  >
+                    <option value="">全部</option>
+                    <option value="ANY">有退款</option>
+                    <option value="PARTIAL">部分退款</option>
+                    <option value="FULL">全额退款</option>
+                    <option value="NONE">无退款</option>
+                  </Select>
+                </FilterField>
                 <label className="filter-field-checkbox flex items-center gap-2 text-sm text-muted">
                   <input
                     type="checkbox"
@@ -1279,6 +1328,14 @@ export function OrdersPage({
                           <span className="inline-flex items-center gap-1.5 flex-wrap">
                             {o.orderNo}
                             {renderNotesBadge(o)}
+                            {(() => {
+                              const refundBadge = getRefundBadge(o);
+                              return refundBadge ? (
+                                <Badge variant={refundBadge.variant}>
+                                  {refundBadge.label}
+                                </Badge>
+                              ) : null;
+                            })()}
                           </span>
                           {o.isDeleted && (
                             <Badge variant="warning" className="ml-1">已删除</Badge>
@@ -1291,13 +1348,24 @@ export function OrdersPage({
                         <td className="py-3 pl-4 align-top">
                           {(() => {
                             const badge = getPaymentBadge(o);
+                            const refundBadge = getRefundBadge(o);
                             return (
-                              <Badge variant={badge.variant}>
-                                {badge.label}
-                                {o.paymentStatus === "PARTIAL" && o.paidAmount > 0
-                                  ? ` ${formatCurrency(o.paidAmount)}`
-                                  : ""}
-                              </Badge>
+                              <div className="flex flex-col items-start gap-1">
+                                <Badge variant={badge.variant}>
+                                  {badge.label}
+                                  {o.paymentStatus === "PARTIAL" && o.paidAmount > 0
+                                    ? ` ${formatCurrency(o.paidAmount)}`
+                                    : ""}
+                                </Badge>
+                                {refundBadge && (
+                                  <Badge variant={refundBadge.variant}>
+                                    {refundBadge.label}
+                                    {o.refundAmount
+                                      ? ` ${formatCurrency(o.refundAmount)}`
+                                      : ""}
+                                  </Badge>
+                                )}
+                              </div>
                             );
                           })()}
                         </td>
@@ -1722,6 +1790,20 @@ export function OrdersPage({
               </div>
               {selected.paidAt && (
                 <div><span className="text-muted">收款时间：</span>{formatDate(selected.paidAt)}</div>
+              )}
+              {getRefundBadge(selected) && (
+                <div>
+                  <span className="text-muted">退款状态：</span>
+                  <Badge variant={getRefundBadge(selected)!.variant} className="ml-1">
+                    {getRefundBadge(selected)!.label}
+                  </Badge>
+                  {selected.refundAmount
+                    ? ` ${formatCurrency(selected.refundAmount)}`
+                    : ""}
+                </div>
+              )}
+              {selected.refundedAt && (
+                <div><span className="text-muted">退款时间：</span>{formatDate(selected.refundedAt)}</div>
               )}
             </div>
 

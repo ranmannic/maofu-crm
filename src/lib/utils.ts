@@ -28,6 +28,13 @@ export function formatCurrency(amount: number) {
   }).format(safe);
 }
 
+export function formatBytes(bytes: number) {
+  const value = Math.max(0, Number(bytes) || 0);
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
+  if (value < 1024 * 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(value / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
 export function formatDate(date: Date | string | null | undefined) {
   if (!date) return "-";
   const d = typeof date === "string" ? new Date(date) : date;

@@ -8,6 +8,7 @@ import { ROLE_LABELS, type SessionUser } from "@/lib/auth-types";
 import { navItems } from "@/components/layout/nav-items";
 import { useSidebar } from "@/components/layout/sidebar-context";
 import { useEdition } from "@/components/edition/edition-provider";
+import { useSiteSettings } from "@/components/site/site-settings-provider";
 
 export function Sidebar({ user }: { user: SessionUser }) {
   const pathname = usePathname();
@@ -15,6 +16,7 @@ export function Sidebar({ user }: { user: SessionUser }) {
   const { open, close, setOpen } = useSidebar();
   const { isPremiumActive, premiumAccess, trialDaysLeft, resetExperience } =
     useEdition();
+  const { siteName, siteIconUrl } = useSiteSettings();
   const items = navItems.filter((item) => {
     if (!item.roles.includes(user.role)) return false;
     if (item.premiumOnly && !isPremiumActive) return false;
@@ -53,20 +55,36 @@ export function Sidebar({ user }: { user: SessionUser }) {
         <div className="sidebar-shine absolute inset-0 opacity-20" aria-hidden />
 
         <div
+          onClick={() => {
+            close();
+            router.push(user.role === "ADMIN" ? "/system?tab=site" : "/");
+          }}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              close();
+              router.push(user.role === "ADMIN" ? "/system?tab=site" : "/");
+            }
+          }}
           className={cn(
-            "relative flex items-center gap-3 border-b px-4 py-5 sm:px-6",
+            "relative flex cursor-pointer items-center gap-3 border-b px-4 py-5 sm:px-6",
             isPremiumActive ? "border-[#edf0f5]" : "border-white/10"
           )}
         >
           <div
             className={cn(
-              "flex h-11 w-11 items-center justify-center rounded-xl border",
+              "flex h-11 w-11 items-center justify-center overflow-hidden rounded-xl border",
               isPremiumActive
                 ? "border-[#5b7cfa]/25 bg-[#5b7cfa]/10"
                 : "border-gold/40 bg-black/20"
             )}
           >
-            {isPremiumActive ? (
+            {siteIconUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={siteIconUrl} alt="" className="h-full w-full object-cover" />
+            ) : isPremiumActive ? (
               <Crown className="h-6 w-6 text-[#5b7cfa]" />
             ) : (
               <Wine className="h-6 w-6 text-gold" />
@@ -79,7 +97,7 @@ export function Sidebar({ user }: { user: SessionUser }) {
                 isPremiumActive ? "text-[#1f2433]" : "font-serif text-paper"
               )}
             >
-              毛府酒庄
+              {siteName}
             </div>
             <div
               className={cn(
@@ -92,7 +110,10 @@ export function Sidebar({ user }: { user: SessionUser }) {
           </div>
           <button
             type="button"
-            onClick={() => setOpen(false)}
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpen(false);
+            }}
             className={cn(
               "rounded-lg p-2 lg:hidden",
               isPremiumActive

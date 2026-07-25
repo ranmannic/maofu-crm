@@ -21,6 +21,7 @@ import { Input, Label, Textarea } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { useEdition } from "@/components/edition/edition-provider";
 import { CustomerPolicySection } from "@/components/customers/customer-policy-section";
+import { CustomerPurchaseChart } from "@/components/customers/customer-purchase-chart";
 import {
   SEGMENT_LABELS,
   CHURN_LABELS,
@@ -64,6 +65,8 @@ interface TimelineItem {
   title: string;
   summary: string;
   href?: string;
+  nextPlan?: string | null;
+  nextFollowUpAt?: string | null;
 }
 
 export function Customer360Page({
@@ -280,6 +283,8 @@ export function Customer360Page({
         <CustomerPolicySection customerId={customerId} canEdit={canEditFollowUp} />
       )}
 
+      <CustomerPurchaseChart customerId={customerId} />
+
       <Card>
         <CardHeader>
           <CardTitle className="font-serif text-base">动态时间轴</CardTitle>
@@ -301,7 +306,23 @@ export function Customer360Page({
                     {new Date(item.at).toLocaleString("zh-CN")}
                   </div>
                   <div className="font-medium text-sm mt-0.5">{item.title}</div>
-                  <p className="text-sm text-muted mt-0.5">{item.summary}</p>
+                  <p className="text-sm text-muted mt-0.5 whitespace-pre-wrap">{item.summary}</p>
+                  {item.type === "follow_up" && (item.nextPlan || item.nextFollowUpAt) && (
+                    <div className="mt-1.5 rounded-md border border-border/60 bg-background/80 px-2.5 py-1.5 text-xs text-foreground space-y-0.5">
+                      {item.nextPlan && (
+                        <p>
+                          <span className="text-muted">下次计划：</span>
+                          {item.nextPlan}
+                        </p>
+                      )}
+                      {item.nextFollowUpAt && (
+                        <p>
+                          <span className="text-muted">下次跟进：</span>
+                          {item.nextFollowUpAt}
+                        </p>
+                      )}
+                    </div>
+                  )}
                   {item.href && (
                     <AppNavLink
                       href={item.href}

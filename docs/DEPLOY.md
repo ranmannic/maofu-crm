@@ -1,6 +1,6 @@
 # 毛府酒庄 CRM — Docker 部署指南
 
-**当前稳定版本：`v1.0.0`**（首页底部可查看；对应 `package.json` 的 `version` 字段）
+**当前稳定版本：`v1.1.0`**（首页底部可查看；对应 `package.json` 的 `version` 字段）
 
 本文档适用于 **线上 Docker / Docker Compose** 部署（阿里云 ECS、轻量应用服务器等），介绍从零部署、版本更新、数据备份与迁移策略。
 
@@ -13,9 +13,10 @@
 | 场景 | 正确做法 | 错误做法（可能导致数据丢失或灌入演示数据） |
 |------|----------|---------------------------------------------|
 | **首次部署（空服务器）** | `.env` 设 `INIT_DB=true`，启动后**立即改回** `INIT_DB=false` | 长期保持 `INIT_DB=true`（误删库后会自动恢复为演示快照） |
-| **已有业务数据的生产环境** | `INIT_DB=false`；更新前**先备份** `prod.db` 与 uploads 卷 | 执行 `db:init` / `db:seed` / `db:reset` |
+| **已有业务数据的生产环境** | `INIT_DB=false`；更新前**先备份** `prod.db` 与 uploads 卷 | 执行 `db:init` / `db:seed` / `db:reset` / `db:seed-maofu-team1-orders` / `db:clear-orders` |
 | **版本更新** | `git pull` → 备份 → `docker compose build` → `up -d`；由 entrypoint 自动 `migrate deploy` | 在容器内 `prisma db push --accept-data-loss` |
 | **开发机维护 init 快照** | 仅在**无生产数据**的开发库上 `npm run db:export-init`，用于新环境演示 | 用含真实客户手机号的 prod.db 导出并提交 `init.db` |
+| **自助注册（v1.1.0）** | 生产已有账号时**勿**设 `ENABLE_SELF_REGISTER=true`；空库可走 `/welcome` 开通 | 在已有生产库强制开启自助注册（会再建 ADMIN 并改写站点品牌） |
 
 **核心原则：生产数据只存在于 Docker 卷中，不在 Git 仓库里。** 任何会「覆盖整库」或「清空表」的命令，都只能在本地开发环境使用。
 
@@ -222,6 +223,7 @@ INIT_DB=false
 | `JWT_SECRET` | 是 | 会话签名密钥，至少 32 位随机字符串 |
 | `COOKIE_SECURE` | 否 | 会话 Cookie 是否带 `Secure`。默认：生产为 `true`。若仅用 **HTTP**（无 HTTPS）访问，须设 `COOKIE_SECURE=false`，否则浏览器不保存登录态，表现为一点菜单就退回登录页 |
 | `INIT_DB` | 首次 | 见 [3.6 节](#36-首次初始化说明重要)。**仅空数据卷**时从 `init.db` 复制；`prod.db` 已存在则不会覆盖。生产环境长期保持 `false` |
+| `ENABLE_SELF_REGISTER` | 否 | `true` 时强制开放 `/welcome` 自助注册。**默认**：仅当库中 **用户数为 0** 时可注册。已有业务账号的生产环境**必须保持未设置或 `false`** |
 | `RUN_SYNC` | 否 | `true` 时每次启动执行业绩/客户状态回填（升级时可临时开启） |
 | `APP_PORT` | 否 | 宿主机映射端口，默认 `3001` |
 | `NGINX_HTTP_PORT` | 否 | Nginx profile 对外端口，默认 `80` |
@@ -269,7 +271,7 @@ docker compose exec app npx tsx prisma/sync-customer-status.ts
 docker compose exec app npx prisma migrate status
 ```
 
-> ⚠️ **禁止**在生产环境执行 `db:init` / `db:seed` / `db:reset` / `prisma db push --accept-data-loss`（会覆盖、清空或破坏数据）。本地开发可用 `db push`，生产仅依赖 migration。
+> ⚠️ **禁止**在生产环境执行 `db:init` / `db:seed` / `db:reset` / `db:clear-orders` / `db:seed-maofu-team1-orders` / `prisma db push --accept-data-loss`（会覆盖、清空或写入演示数据）。本地开发可用 `db push`，生产仅依赖 migration。
 
 ---
 
@@ -314,8 +316,9 @@ curl -I http://127.0.0.1:3001/login
 **更新前禁止：**
 
 - 在未备份的情况下 `docker volume rm maofu-crm-data`
-- 在容器内 `npm run db:init` / `db:reset` / `db:seed`
+- 在容器内 `npm run db:init` / `db:reset` / `db:seed` / `db:clear-orders` / `db:seed-maofu-team1-orders`
 - 使用开发命令 `prisma db push --accept-data-loss` 连接生产库
+- 在已有账号的生产库设置 `ENABLE_SELF_REGISTER=true`
 
 **更新后若异常：**
 
@@ -355,7 +358,8 @@ curl -I http://127.0.0.1:3001/login
 - [ ] 已备份数据卷中的 `prod.db`（及 uploads 卷，v0.8+）
 - [ ] 已阅读本次 commit / 版本说明
 - [ ] 确认是否涉及 `prisma/schema.prisma` 变更（entrypoint 会自动 `migrate deploy`）
-- [ ] **未**执行 `db:init` / `db:seed` / `db:reset`
+- [ ] **未**执行 `db:init` / `db:seed` / `db:reset` / `db:clear-orders` / `db:seed-maofu-team1-orders`
+- [ ] `.env` **未**设置 `ENABLE_SELF_REGISTER=true`（已有业务账号时）
 - [ ] 镜像重建成功、`docker compose ps` 正常
 - [ ] `prisma migrate status` 无 failed migration
 - [ ] v0.3+ 升级：已执行 `sync-performance`（如首页业绩为 0）
@@ -366,14 +370,17 @@ curl -I http://127.0.0.1:3001/login
 - [ ] v1.0+ 升级：双版本/库存/客户政策/月度固定成本三个迁移已 `migrate deploy`（见 7.3.2）；新字段默认值正常，无需回填
 - [ ] v1.1+ 升级：销售提成三个迁移已 `migrate deploy`（见 7.3.3）；高级版导航合并（系统管理、产品展示入口）；建议执行 `sync-performance` 确保提成统计有业绩数据
 - [ ] v1.2+ 升级：库存重构四个迁移已 `migrate deploy`（见 [7.3.4](#734-v12-高级版库存重构重要)）；**已备份**；`INIT_DB=false`；升级后核对酒体 SKU、物料、规格库存依据
-- [ ] **v1.0.0 升级**（当前正式版）：含 v1.0～v1.2 全部能力 + 散酒小数库存依据迁移（见 [7.3.5](#735-v100-正式版当前发布)）；`20260702120000_stock_basis_decimal_liter` 已 apply；高级版主题样式正常（蓝灰背景/白色卡片）
+- [ ] **v1.0.0 升级**：含 v1.0～v1.2 全部能力 + 散酒小数库存依据迁移（见 [7.3.5](#735-v100-正式版当前发布)）；`20260702120000_stock_basis_decimal_liter` 已 apply；高级版主题样式正常（蓝灰背景/白色卡片）
 - [ ] **post-v1.0.0 升级**（销售管理、产品软删除等）：两个新迁移已 `migrate deploy`（见 [7.3.6](#736-post-v100-销售管理与产品软删除)）；管理员在「账号管理 → 小队配置」创建/维护 **销售管理** 账号
+- [ ] **v1.1.0 升级**（当前生产线版本）：站点品牌迁移已 `migrate deploy`（见 [7.3.7](#737-v110-站点品牌跟进日程与生产防护当前发布)）；确认 **未**设置 `ENABLE_SELF_REGISTER=true`；**未**执行任何 seed/clear 演示脚本
 - [ ] 抽查：订单导出、账期核销待审核、职能工作台「核销待审核」提醒
 - [ ] v1.1+ 抽查：高级版「系统管理」（渠道/账号）、「销售提成」规则与月度统计、产品管理→产品展示、职能账号产品展示
 - [ ] v1.2+ 抽查：库存管理（酒体/物料/可售数）、销售库存一览、规格配置库存、发货扣库与回库、账期账龄 Tab
-- [ ] v1.0.0 抽查：首页底部显示 `v1.0.0`；散酒规格库存依据可填 `0.75` 升；销售提成统计、高级版 UI 与生产线一致
+- [ ] v1.0.0 抽查：散酒规格库存依据可填 `0.75` 升；销售提成统计、高级版 UI 与生产线一致
 - [ ] post-v1.0.0 抽查：销售管理登录后数据概览含「各小队业绩」、团队范围订单/账期/客户只读；产品「删除」为软删除且历史订单仍可见原规格
+- [ ] v1.1.0 抽查：首页底部显示 `v1.1.0`；登录页品牌名正常；系统管理可改站点名称/图标；客户 360 跟进计划与拿货折线；跟进页「跟进日程」分页；订单退款筛选；**无小队时首页不显示空小队业绩**
 - [ ] 上线后登录页无默认密码提示；确认已修改全部账号密码
+- [ ] 上线后确认 `.env` **无** `ENABLE_SELF_REGISTER=true`（除非刻意空库开通）
 
 ### 6.2 临时开启启动时自动回填
 
@@ -391,7 +398,7 @@ curl -I http://127.0.0.1:3001/login
 | **先备份再更新** | 每次 `git pull` + 重建镜像前备份 `prod.db` 与 uploads 卷 |
 | **INIT_DB 仅用于空卷** | 只在**首次空数据卷**部署时用 `INIT_DB=true` 灌演示快照；之后永久 `false` |
 | **init.db ≠ 生产备份** | `prisma/init.db` 是 Git 中的演示快照，**不能**用来恢复生产事故；生产恢复用 [8.3 节](#83-恢复数据库) 的 gzip 备份 |
-| **禁止 seed/reset/init** | 勿在容器内执行 `db:seed` / `db:reset` / `db:init`（`db:init` 会整库覆盖，与 entrypoint 空卷逻辑不同） |
+| **禁止 seed/reset/init** | 勿在容器内执行 `db:seed` / `db:reset` / `db:init` / `db:clear-orders` / `db:seed-maofu-team1-orders`（`db:init` 会整库覆盖，与 entrypoint 空卷逻辑不同） |
 | **生产只用 migrate** | 表结构变更通过 `prisma migrate deploy`；禁止 `db push --accept-data-loss` |
 | **单实例 SQLite** | 不要水平扩展多个写实例挂载同一库 |
 
@@ -427,8 +434,9 @@ curl -I http://127.0.0.1:3001/login
 | v1.2+ | **高级版库存重构**（酒体瓶/升、物料、规格库存依据、订单出库/回库联动）、账期账龄、销售库存一览、导航返回保留筛选、图片压缩 | **migrate only**（见 [7.3.4](#734-v12-高级版库存重构重要)）；升级前**必须备份**；升级后核对酒体 SKU 与规格库存依据 |
 | **v1.0.0** | **正式版发布**：整合双版本、销售提成、库存重构；散酒升单位小数依据；高级版主题样式修复；首页版本号 | **migrate only**（见 [7.3.5](#735-v100-正式版当前发布)）；自 v0.9 以前版本升级需按 7.3.2～7.3.4 顺序补齐全部迁移 |
 | **post-v1.0.0** | **销售管理**角色与小队配置；产品/规格**软删除**；首页小队业绩、团队范围数据；会话 Cookie（`COOKIE_SECURE`）说明 | **migrate only**（见 [7.3.6](#736-post-v100-销售管理与产品软删除)）；升级后**人工**配置销售管理账号；建议按需 `sync-performance` |
+| **v1.1.0** | **生产线版本**：站点名称/图标；欢迎页与空库自助注册；跟进日程分页；客户 360 计划与拿货折线；订单退款筛选；渠道饼图与小队业绩展示优化 | **migrate only**（见 [7.3.7](#737-v110-站点品牌跟进日程与生产防护当前发布)）；**禁止** seed/演示脚本；**禁止**生产开启 `ENABLE_SELF_REGISTER` |
 
-详细字段说明见历史版本记录；**Git 标签 `v1.0.0` 仍为正式版基线**；其后 `main` 提交含 [7.3.6](#736-post-v100-销售管理与产品软删除) 等增量能力。
+详细字段说明见历史版本记录；**当前生产线请以 Git 标签 / `package.json` `v1.1.0` 为准**；此前正式版基线为 `v1.0.0`。
 
 ### 7.3.2 v1.0 数据结构变更与老数据兼容（重要）
 
@@ -518,9 +526,9 @@ curl -I http://127.0.0.1:3001/login
 
 升级后抽查：创建酒体 SKU 并入库 → 配置规格依据（含物料）→ 库存管理「规格最大可售数」→ 销售「库存一览」→ 订单发货后酒体/物料扣减 → 取消发货回库。
 
-### 7.3.5 v1.0.0 正式版（当前发布）
+### 7.3.5 v1.0.0 正式版
 
-**Git 标签 / `package.json` 版本：`v1.0.0`。** 本版本为对外正式版，整合此前文档中的 v1.0（双版本/库存初版）、v1.1（销售提成）、v1.2（库存重构）及上线前修复项。从**已有生产线**（如已部署 `0b6b4b8` 或更早 commit）升级时，请按 [6.0 节](#60-生产更新安全流程推荐按顺序执行) 备份后拉取 `main` 并重建镜像。
+**Git 标签 / `package.json` 版本：`v1.0.0`（历史正式版基线）。** 当前生产线请升级至 [7.3.7 v1.1.0](#737-v110-站点品牌跟进日程与生产防护当前发布)。本版本整合此前文档中的 v1.0（双版本/库存初版）、v1.1（销售提成）、v1.2（库存重构）及上线前修复项。从**已有生产线**（如已部署 `0b6b4b8` 或更早 commit）升级时，请按 [6.0 节](#60-生产更新安全流程推荐按顺序执行) 备份后拉取代码并重建镜像。
 
 #### 自 v0.9 及更早版本升级（首次上 v1.0.0 全量能力）
 
@@ -624,6 +632,66 @@ curl -I http://127.0.0.1:3001/login
 
 升级后抽查：管理员配置一名销售管理并绑定 1～2 名销售 → 该账号登录可见小队订单与客户 → 产品软删除后历史订单仍显示原产品名。
 
+### 7.3.7 v1.1.0 站点品牌、跟进日程与生产防护（当前发布）
+
+**Git 标签 / `package.json` 版本：`v1.1.0`。** 本版本为计划上生产线的增量发布，覆盖站点品牌、欢迎页开通、跟进日程、客户 360 增强与订单退款筛选等。从已运行 **v1.0.0 / post-v1.0.0** 的生产线升级时，务必按 [6.0 节](#60-生产更新安全流程推荐按顺序执行) **先备份再拉代码重建镜像**；entrypoint 会自动 `prisma migrate deploy`。
+
+#### 新增迁移（相对 post-v1.0.0）
+
+| 迁移目录 | 变更内容 | 老数据影响 |
+|----------|----------|------------|
+| `20260702173000_site_settings_and_branding` | `AppSetting` 增加 `siteName`（默认「毛府酒庄」）、`siteIconKey`（可空） | **增量加列**；已有 `global` 行自动获得默认站名；**不改动**订单、客户、产品、业绩等业务表 |
+
+> ✅ **数据安全要点（生产必读）**
+>
+> 1. **升级前必做**：备份 `prod.db` 与 uploads 卷；确认 **`INIT_DB=false`**。
+> 2. **仅允许 migrate**：容器启动自动 `prisma migrate deploy`。**禁止** `db:init` / `db:seed` / `db:reset` / `db:clear-orders` / `db:seed-maofu-team1-orders` / `db push --accept-data-loss`。
+> 3. **迁移安全**：仅为 `AppSetting` 加两列并带默认值，不删表、不回填业务行、不改角色权限。
+> 4. **自助注册默认关闭（已有账号时）**：`/welcome` 与 `/api/auth/register` 仅在 **用户数为 0** 或显式 `ENABLE_SELF_REGISTER=true` 时可用。生产线已有账号时 **不要** 设置该变量，否则可能再建 ADMIN 并改写站点品牌/图标。
+> 5. **站点图标文件**：保存在 uploads 卷下 `data/uploads/site/`，与凭证/相册一并备份（见 [8.4 节](#84-备份上传文件uploads)）；勿依赖 `init.db`。
+> 6. **演示种子脚本**：仓库中的 `prisma/seed-maofu-team1-orders.ts` **仅本地开发**；脚本会拒绝 `prod.db` / `NODE_ENV=production`。切勿在容器内执行。
+> 7. **无需** `RUN_SYNC` / `sync-customer-status`；提成统计缺历史数据时再按需 `sync-performance`。
+
+#### 应用层变更（无额外 migration）
+
+| 模块 | 说明 | 对生产现有数据影响 |
+|------|------|-------------------|
+| 站点品牌 | 登录页/侧栏站点名；系统管理可改名称与图标 | 默认「毛府酒庄」；未改图标则行为与升级前一致 |
+| 欢迎页 `/welcome` | 空库自助开通（品牌名 + 手机号） | **已有用户时接口返回 403**，不影响现有登录 |
+| 跟进日程 | 管理员/销售管理：时间范围内跟进记录与计划，**分页 20 条/页** | 只读聚合已有跟进数据，不写库 |
+| 客户 360 | 时间线展示下次跟进计划；SKU 拿货折线（月/年） | 只读统计，不改订单 |
+| 订单退款 | 列表筛选与详情退款标记 | 只读查询既有退款字段 |
+| 数据概览 | 无销售管理小队时不展示空「小队业绩」；渠道饼图图例优化 | 展示层变更 |
+| 版本号 | 首页底部 `系统版本 v1.1.0` | 无 |
+
+#### 升级后运维核对
+
+1. `grep -E 'ENABLE_SELF_REGISTER|INIT_DB' .env` → 生产应为 **无** `ENABLE_SELF_REGISTER=true`，且 `INIT_DB=false`。
+2. `docker compose exec app npx prisma migrate status` → 确认 `20260702173000_site_settings_and_branding` 已 apply。
+3. 登录后抽查：首页版本号、登录品牌、客户 360、跟进日程分页、订单退款筛选。
+4. （可选）管理员在「系统管理」更新站点名称/图标；图标变更后确认 uploads 卷可写。
+
+#### 生产线升级命令（自 v1.0.0 / post-v1.0.0）
+
+```bash
+cd /opt/maofu-crm
+grep -E '^INIT_DB|^ENABLE_SELF_REGISTER' .env   # INIT_DB=false；勿启用 ENABLE_SELF_REGISTER
+./scripts/backup-docker-db.sh ./backups
+# 备份 uploads 卷（见 8.4 节）
+git fetch origin && git pull origin main
+# 建议：git checkout v1.1.0   # 或确认 main 已指向本版本
+docker compose build
+docker compose up -d
+docker compose exec app npx prisma migrate status
+# 应看到 20260702173000_site_settings_and_branding 已 apply
+# （若尚未执行过 post-v1.0.0）同时确认 20260724120000_* 与 20260724150000_* 已 apply
+curl -I http://127.0.0.1:3001/login
+```
+
+> ❌ **升级时不要执行**：`npm run db:seed`、`db:seed-maofu-team1-orders`、`db:clear-orders`、`db:init`、`db:reset`，以及任何会删除/重写订单的脚本。
+
+升级后抽查：首页底部 `v1.1.0`；登录页站名；跟进页「跟进日程」可翻页；客户 360 有计划与折线；订单可按退款筛选；访问 `/welcome` 在已有账号环境下不可开通新租户。
+
 ### 7.3.1 功能与路由说明（v0.8+ / v0.9+）
 
 | 模块 | 说明 | 访问路径 / 备注 |
@@ -657,6 +725,8 @@ curl -I http://127.0.0.1:3001/login
 | `docker compose exec app npm run db:init` | ❌ **整库覆盖**，与 entrypoint 空卷初始化不同 |
 | `docker compose exec app npx prisma db push --accept-data-loss` | ❌ 可能丢列/丢数据 |
 | `docker compose exec app npm run db:seed` | ❌ 禁止 |
+| `docker compose exec app npm run db:seed-maofu-team1-orders` | ❌ 禁止（写入演示订单；脚本也会拒绝 prod.db） |
+| `docker compose exec app npm run db:clear-orders` | ❌ 禁止（清空全部订单） |
 | `docker compose exec app npm run db:reset` | ❌ 禁止 |
 
 ---

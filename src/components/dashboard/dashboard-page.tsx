@@ -398,7 +398,8 @@ export function DashboardPage({ user }: { user: SessionUser }) {
             )}
           </div>
 
-          {stats.teamPerformance && (
+          {stats.teamPerformance &&
+            stats.teamPerformance.teams.some((t) => t.managerId) && (
             <TeamPerformanceSection
               teams={stats.teamPerformance.teams}
               hidden={hidden}

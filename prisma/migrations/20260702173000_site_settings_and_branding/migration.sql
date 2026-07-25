@@ -1,0 +1,2 @@
+ALTER TABLE "AppSetting" ADD COLUMN "siteName" TEXT NOT NULL DEFAULT '毛府酒庄';
+ALTER TABLE "AppSetting" ADD COLUMN "siteIconKey" TEXT;

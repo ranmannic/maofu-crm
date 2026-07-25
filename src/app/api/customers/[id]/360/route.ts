@@ -123,6 +123,8 @@ export async function GET(
       title: string;
       summary: string;
       href?: string;
+      nextPlan?: string | null;
+      nextFollowUpAt?: string | null;
     };
 
     const timeline: TimelineItem[] = [];
@@ -151,6 +153,8 @@ export async function GET(
         at: r.followedAt.toISOString(),
         title: "客户跟进",
         summary: r.content.slice(0, 120) + (r.content.length > 120 ? "…" : ""),
+        nextPlan: r.nextPlan || null,
+        nextFollowUpAt: r.nextFollowUpAt ? formatDate(r.nextFollowUpAt) : null,
       });
     }
 

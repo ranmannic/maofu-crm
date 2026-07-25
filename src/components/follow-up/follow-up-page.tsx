@@ -24,6 +24,7 @@ import { Input, Label, Select, Textarea } from "@/components/ui/input";
 import { Pagination } from "@/components/ui/pagination";
 import { DEFAULT_PAGE_SIZE } from "@/lib/constants";
 import { cn, formatDate } from "@/lib/utils";
+import { FollowUpActivityPanel } from "@/components/follow-up/follow-up-activity-panel";
 import type { SessionUser } from "@/lib/auth-types";
 import {
   SEGMENT_LABELS,
@@ -475,6 +476,8 @@ export function FollowUpPage({ user }: { user: SessionUser }) {
           管理线索与已成交客户的跟进记录，及时提醒待跟进事项
         </p>
       </div>
+
+      {showSalesFilter && <FollowUpActivityPanel />}
 
       {stats && (
         <div className="stat-tile-grid cols-6 gap-3">

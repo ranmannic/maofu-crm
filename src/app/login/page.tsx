@@ -1,16 +1,27 @@
 "use client";
 
-import { useState } from "react";
+import Link from "next/link";
+import { useEffect, useState } from "react";
 import { Wine } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 import { ADMIN_DASHBOARD_DATA_VISIBLE_KEY } from "@/lib/constants";
+import { useSiteSettings } from "@/components/site/site-settings-provider";
 
 export default function LoginPage() {
+  const { siteName, siteIconUrl } = useSiteSettings();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [registerAvailable, setRegisterAvailable] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/auth/register/status")
+      .then((r) => r.json())
+      .then((d) => setRegisterAvailable(Boolean(d.available)))
+      .catch(() => setRegisterAvailable(false));
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -51,9 +62,14 @@ export default function LoginPage() {
       <div className="w-full max-w-md relative z-10">
         <div className="text-center mb-8">
           <div className="inline-flex h-16 w-16 items-center justify-center rounded-sm border border-gold/50 bg-black/30 mb-4">
-            <Wine className="h-9 w-9 text-gold" />
+            {siteIconUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={siteIconUrl} alt="" className="h-full w-full object-cover" />
+            ) : (
+              <Wine className="h-9 w-9 text-gold" />
+            )}
           </div>
-          <h1 className="text-3xl font-serif font-bold text-paper tracking-widest">毛府酒庄</h1>
+          <h1 className="text-3xl font-serif font-bold text-paper tracking-widest">{siteName}</h1>
           <p className="text-white/60 mt-2 font-serif">订单与CRM管理后台</p>
         </div>
 
@@ -92,6 +108,15 @@ export default function LoginPage() {
           <Button type="submit" className="w-full" disabled={loading}>
             {loading ? "登录中..." : "登录"}
           </Button>
+
+          {registerAvailable && (
+            <p className="text-center text-sm text-white/55">
+              还没有账号？{" "}
+              <Link href="/welcome" className="text-gold underline-offset-4 hover:underline">
+                快速免费体验
+              </Link>
+            </p>
+          )}
         </form>
       </div>
     </div>

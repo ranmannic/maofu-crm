@@ -12,6 +12,7 @@ export type OrderListFilters = {
   isPaid?: string;
   paymentStatus?: string;
   isShipped?: string;
+  refundStatus?: string;
   showDeleted?: boolean;
 };
 
@@ -29,6 +30,7 @@ export function parseOrderListFilters(
     isPaid: searchParams.get("isPaid") || undefined,
     paymentStatus: searchParams.get("paymentStatus") || undefined,
     isShipped: searchParams.get("isShipped") || undefined,
+    refundStatus: searchParams.get("refundStatus") || undefined,
     showDeleted: searchParams.get("showDeleted") === "true",
   };
 }
@@ -100,6 +102,16 @@ export function buildOrderListWhere(
   }
   if (filters.isShipped === "true") where.isShipped = true;
   if (filters.isShipped === "false") where.isShipped = false;
+
+  if (filters.refundStatus === "ANY") {
+    where.refundStatus = { in: ["PARTIAL", "FULL"] };
+  } else if (
+    filters.refundStatus === "PARTIAL" ||
+    filters.refundStatus === "FULL" ||
+    filters.refundStatus === "NONE"
+  ) {
+    where.refundStatus = filters.refundStatus;
+  }
 
   return where;
 }

@@ -122,6 +122,8 @@ model AppSetting {
   premiumTrialStartedAt DateTime?
   premiumTrialEndsAt    DateTime?
   premiumSubscribedAt   DateTime?
+  siteName              String     @default("毛府酒庄")
+  siteIconKey           String?
   monthlyFixedCost      Float      @default(0)
   updatedAt             DateTime   @updatedAt
   updatedById           String?
